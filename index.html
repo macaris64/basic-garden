@@ -80,11 +80,12 @@
       );
       ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
 
-      // Sol-alt köşede sahne — 3× büyütüldü
-      const STAGE_W = 90, STAGE_D = 60, STAGE_H = 30;
+      // Sahne: X/Y sabit; Z ORTADA ve Z boyutu biraz daha büyütüldü
+      const STAGE_W = 90, STAGE_D = 90, STAGE_H = 30; // D eskiden 80'di -> 90
       const stage = new THREE.Mesh(new THREE.BoxGeometry(STAGE_W, STAGE_H, STAGE_D), new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.1, roughness: 0.8 }));
       stage.castShadow = true; stage.receiveShadow = true;
-      stage.position.set(-planeSize/2 + STAGE_W/2, STAGE_H/2, -planeSize/2 + STAGE_D/2);
+      // X ve Y aynı; Z tam orta (0)
+      stage.position.set(-planeSize/2 + STAGE_W/2, STAGE_H/2, 0);
       scene.add(stage);
 
       function insideStageXZ(x, z, half=1){
@@ -100,38 +101,36 @@
     }
   </script>
 
-  <!-- Glass Room (camlı oda) -->
+  <!-- Glass Room (camlı oda) – Kapı BATI duvarında (sahneye doğru) -->
   <script type="module" id="mod-glassroom">
     export function createGlassRoom(THREE, scene, { w, d, position, doorRatio = 0.35 }){
-      // Duvarlar: daha yüksek ve kalın
-      const h = 5.0, t = 0.25; // yükseklik, kalınlık
+      // Duvarlar
+      const h = 5.0, t = 0.25;
       const group = new THREE.Group();
 
-      // Camlar siyah ve belirgin
       const glass = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.5, roughness: 0.7 });
       const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), new THREE.MeshStandardMaterial({ color: 0x303030 }));
       floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
 
-      // Duvarlar: kuzey (-z), güney (+z, ÖN) kapılı, batı (-x), doğu (+x)
+      // Kuzey (-z) ve Güney (+z) tam duvarlar, Doğu (+x) tam duvar
       const north = new THREE.Mesh(new THREE.BoxGeometry(w, h, t), glass); north.position.set(0, h/2, -d/2); group.add(north);
-      const west  = new THREE.Mesh(new THREE.BoxGeometry(d, h, t), glass); west.rotation.y = Math.PI/2; west.position.set(-w/2, h/2, 0); group.add(west);
-      const east  = new THREE.Mesh(new THREE.BoxGeometry(d, h, t), glass); east.rotation.y = Math.PI/2;  east.position.set( w/2, h/2, 0); group.add(east);
+      const south = new THREE.Mesh(new THREE.BoxGeometry(w, h, t), glass); south.position.set(0, h/2,  d/2); group.add(south);
+      const east  = new THREE.Mesh(new THREE.BoxGeometry(d, h, t), glass); east.rotation.y = Math.PI/2; east.position.set( w/2, h/2, 0); group.add(east);
 
-      const doorW = Math.max(1.2, w * doorRatio);
-      const segW = Math.max(0, (w - doorW) / 2);
-      if (segW > 0) {
-        const southL = new THREE.Mesh(new THREE.BoxGeometry(segW, h, t), glass);
-        southL.position.set(- (doorW/2 + segW/2), h/2, d/2); group.add(southL);
-        const southR = new THREE.Mesh(new THREE.BoxGeometry(segW, h, t), glass);
-        southR.position.set(  (doorW/2 + segW/2), h/2, d/2); group.add(southR);
+      // KAPI: BATI (-x) duvarında açıklık – kapı genişliği d'ye göre
+      const doorW = Math.max(1.2, d * doorRatio);
+      const segD = Math.max(0, (d - doorW) / 2);
+      if (segD > 0) {
+        const westL = new THREE.Mesh(new THREE.BoxGeometry(segD, h, t), glass); westL.rotation.y = Math.PI/2; westL.position.set(-w/2, h/2, -(doorW/2 + segD/2)); group.add(westL);
+        const westR = new THREE.Mesh(new THREE.BoxGeometry(segD, h, t), glass); westR.rotation.y = Math.PI/2; westR.position.set(-w/2, h/2,  (doorW/2 + segD/2)); group.add(westR);
       }
 
       group.position.copy(position);
       scene.add(group);
 
-      // --- Çarpışma (sadece iç AABB + kapı) ---
+      // --- Çarpışma (iç AABB + KAPI BATI) ---
       const hx = w/2, hz = d/2;
-      const ixMin = -hx, ixMax =  hx; // iç yüzey merkez-limitleri
+      const ixMin = -hx, ixMax =  hx; // iç limitler
       const izMin = -hz, izMax =  hz;
 
       function isInsideInner(lx, lz, half){
@@ -145,23 +144,23 @@
         const prevInside = isInsideInner(lpx, lpz, half);
         const nowInside  = isInsideInner(lx,  lz,  half);
 
-        // Kapı bandı (Güney: z ~ +izMax)
-        const inDoorX = Math.abs(lx) <= doorW/2;
+        // Kapı bandı (BATI: x ~ ixMin)
+        const inDoorZ = Math.abs(lz) <= doorW/2;
 
-        // 1) İçeriden dışarı / dışarıdan içeri — sadece kapıdan izin ver
-        const southInnerPlane = izMax - half;
-        const crossingSouthOut = (lpz <= southInnerPlane && lz >  southInnerPlane);
-        const crossingSouthIn  = (lpz >= southInnerPlane && lz <  southInnerPlane);
+        // 1) İçeriden dışarı / dışarıdan içeri — sadece kapıdan izin ver (BATI düzlemi)
+        const westInnerPlane = ixMin + half;
+        const crossingWestOut = (lpx >= westInnerPlane && lx <  westInnerPlane);
+        const crossingWestIn  = (lpx <= westInnerPlane && lx >  westInnerPlane);
         if (prevInside && !nowInside){
-          const throughDoor = crossingSouthOut && inDoorX;
+          const throughDoor = crossingWestOut && inDoorZ;
           if (!throughDoor){ pos.x = prev.x; pos.z = prev.z; return; }
         }
         if (!prevInside && nowInside){
-          const throughDoor = crossingSouthIn && inDoorX;
+          const throughDoor = crossingWestIn && inDoorZ;
           if (!throughDoor){ pos.x = prev.x; pos.z = prev.z; return; }
         }
 
-        // 2) İçerideyken duvara gömülmeyi engelle (iç clamp)
+        // 2) İçerideyken duvar clamp'i
         if (prevInside && nowInside){
           pos.x = Math.min(Math.max(pos.x, position.x + ixMin + half), position.x + ixMax - half);
           pos.z = Math.min(Math.max(pos.z, position.z + izMin + half), position.z + izMax - half);
@@ -249,14 +248,14 @@
 
       if (vel.lengthSq()>0.0001){ const dirY = Math.atan2(vel.x, vel.z); if(!Number.isNaN(dirY)) avatar.rotation.y = dirY; }
 
-      // --- Animasyon stabilitesi (ani dur/başla ve dönüşlerde jitter fix) ---
-      avatar.userData.animBlend ??= 0;            // 0..1 arası yürüyüş yoğunluğu
-      avatar.userData.swingTime ??= 0;            // faz
+      // --- Animasyon stabilitesi ---
+      avatar.userData.animBlend ??= 0;
+      avatar.userData.swingTime ??= 0;
       const speed2D = Math.hypot(vel.x, vel.z);
       const targetRun = Math.min(1, speed2D / speed);
-      const blendK = 12; // tepki hızı
+      const blendK = 12;
       avatar.userData.animBlend += (targetRun - avatar.userData.animBlend) * Math.min(1, dt * blendK);
-      if (avatar.userData.animBlend < 0.05) avatar.userData.swingTime = 0; // neredeyse duruyorsa fazı sıfırla
+      if (avatar.userData.animBlend < 0.05) avatar.userData.swingTime = 0;
       const freq = THREE.MathUtils.lerp(2.0, 6.0, avatar.userData.animBlend);
       avatar.userData.swingTime += dt * freq;
       const amp  = THREE.MathUtils.lerp(0.1, 0.6, avatar.userData.animBlend);
@@ -306,11 +305,13 @@
     const roomPos = new THREE.Vector3( planeSize/2 - STAGE_W/2, 0, 0 );
     const { room: glassRoom, block: roomBlock } = createGlassRoom(THREE, scene, { w: STAGE_W, d: STAGE_D, position: roomPos });
 
-    // Avatar: camlı odanın içinde spawn
+    // Avatar: camlı odanın içinde spawn, ismi göster
     const avatar = createAvatar(THREE); scene.add(avatar);
     avatar.position.set(roomPos.x, 1, roomPos.z);
+    avatar.rotation.y = -Math.PI/2; // sahneye (−X) dönük başlasın
 
-    camera.position.set(avatar.position.x + 6, avatar.position.y + 8, avatar.position.z + 10);
+    // Spawn kamerası: kapıya (BATI) doğru baksın => kamerayı avatarın doğusuna koy (arkadan batıya bakış)
+    camera.position.set(avatar.position.x + 12, avatar.position.y + 8, avatar.position.z + 0);
     controls.target.copy(avatar.position);
 
     function deg(rad){ return (rad * 180 / Math.PI); }
