@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>Three.js – Yeşil Alan + Köşede Yüksek Sahne + Kutu-İnsan (Göz/Kaş) – FIX</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body { height: 100%; margin: 0; overflow: hidden; background: #000; }
+    canvas { display: block; }
+    .hint { position: fixed; left: 12px; top: 12px; color: #fff; font: 14px/1.4 system-ui, sans-serif; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 8px; user-select: none; -webkit-user-select: none; z-index: 2; }
+  </style>
+</head>
+<body>
+  <div class="hint">W-A-S-D: kamera göreli hareket · Space: zıpla · Fare: kamerayı çevir</div>
+
+  <!-- import map: examples/jsm modülleri 'three' bare specifier kullanır -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.158.0/build/three.module.js"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'https://unpkg.com/three@0.158.0/examples/jsm/controls/OrbitControls.js';
+
+    // --- Temel Kurulum ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87b7ff);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 10, 16);
+
+    // Renderer > DOM (önce oluştur ve ekle, sonra Controls'a ver)
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    // OrbitControls (domElement kesinlikle NULL değil)
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; controls.dampingFactor = 0.08; controls.enablePan = false;
+    controls.minDistance = 6; controls.maxDistance = 40; controls.maxPolarAngle = Math.PI * 0.49;
+    controls.target.set(0, 2, 0);
+    // WASD'nin kamera zoom/pan ile etkileşimini kapat
+    controls.enableKeys = false;          // tüm yerleşik kısayolları kapat
+    controls.keys = {};                   // emniyet için boş set
+    controls.keyPanSpeed = 0;             // pan hızını sıfırla
+
+    // --- Işıklar ---
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    dirLight.position.set(60, 100, 40); dirLight.castShadow = true; dirLight.shadow.mapSize.set(2048, 2048);
+    scene.add(dirLight);
+
+    // --- Zemin ve Sahne ---
+    const PLANE_SIZE = 200;
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE), new THREE.MeshLambertMaterial({ color: 0x2faa2f }));
+    ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+
+    const STAGE_W = 30, STAGE_D = 20, STAGE_H = 10;
+    const stage = new THREE.Mesh(new THREE.BoxGeometry(STAGE_W, STAGE_H, STAGE_D), new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.1, roughness: 0.8 }));
+    stage.castShadow = true; stage.receiveShadow = true;
+    stage.position.set(-PLANE_SIZE/2 + STAGE_W/2, STAGE_H/2, -PLANE_SIZE/2 + STAGE_D/2); scene.add(stage);
+
+    // --- Giriş (Space tuşu güvenli eşleme) ---
+    const keys = { w: false, a: false, s: false, d: false, space: false };
+    function mapKey(e){ const k = e.key; if (k === ' ' || k === 'Spacebar') return 'space'; const low = (k || '').toLowerCase(); if (low === 'space') return 'space'; return low; }
+    window.addEventListener('keydown', (e) => { const kk = mapKey(e); if (kk in keys) { keys[kk] = true; if (kk === 'space') e.preventDefault(); }});
+    window.addEventListener('keyup',   (e) => { const kk = mapKey(e); if (kk in keys) { keys[kk] = false; if (kk === 'space') e.preventDefault(); }});
+
+    // --- Fizik / Parametreler ---
+    const AVATAR_SIZE = 2; // çarpışma yüksekliği referansı
+    const speed = 18, friction = 10.0, jumpSpeed = 8.5, gravity = 22;
+    let vel = new THREE.Vector3(0, 0, 0);
+
+    const minX = -PLANE_SIZE/2 + AVATAR_SIZE/2, maxX = PLANE_SIZE/2 - AVATAR_SIZE/2;
+    const minZ = -PLANE_SIZE/2 + AVATAR_SIZE/2, maxZ = PLANE_SIZE/2 - AVATAR_SIZE/2;
+
+    function insideStageXZ(x, z) {
+      const half = AVATAR_SIZE/2;
+      const sxMin = stage.position.x - STAGE_W/2 - half;
+      const sxMax = stage.position.x + STAGE_W/2 + half;
+      const szMin = stage.position.z - STAGE_D/2 - half;
+      const szMax = stage.position.z + STAGE_D/2 + half;
+      return (x >= sxMin && x <= sxMax && z >= szMin && z <= szMax);
+    }
+    function groundHeightAt(x, z) { if (insideStageXZ(x, z)) return 9999; return 0; }
+
+    // --- Kamera göreli yönler ---
+    const up = new THREE.Vector3(0,1,0), fwd = new THREE.Vector3(), right = new THREE.Vector3();
+    // Kollar/bacaklar sallama durumu (önce bildir, sonra atayacağız)
+    let boxManSwing = null;
+
+    // --- Basit İnsan (Kutu-İnsan) – Göz & Kaşlı ---
+    let avatar = null; // Group
+    (function initAvatarBoxMan(){
+      const skin = new THREE.MeshStandardMaterial({ color: 0xffe0bd });
+      const limb = new THREE.MeshStandardMaterial({ color: 0x888888 });
+      const black = new THREE.MeshStandardMaterial({ color: 0x111111 });
+      const white = new THREE.MeshStandardMaterial({ color: 0xffffff });
+      const gBox = (x,y,z,m)=>{ const mesh=new THREE.Mesh(new THREE.BoxGeometry(x,y,z), m); mesh.castShadow=true; return mesh; };
+
+      avatar = new THREE.Group();
+      // Gövde ve kafa
+      const torso = gBox(1.2, 1.6, 0.6, skin); torso.position.y = 1.6; avatar.add(torso);
+      const head  = gBox(0.9, 0.9, 0.9, skin); head.position.y  = 2.65; avatar.add(head);
+
+      // Yüz: gözler (beyaz + iris) ve kaşlar
+      const face = new THREE.Group();
+      face.position.set(0, 2.65, 0.455); // kafanın ön yüzüne yakın
+      const eyeW_L = gBox(0.22, 0.18, 0.02, white); eyeW_L.position.set(-0.22, 0.08, 0);
+      const eyeW_R = eyeW_L.clone(); eyeW_R.position.x *= -1;
+      const eye_L = gBox(0.08, 0.08, 0.03, black); eye_L.position.set(-0.22, 0.08, 0.02);
+      const eye_R = eye_L.clone(); eye_R.position.x *= -1;
+      const brow_L = gBox(0.28, 0.05, 0.03, black); brow_L.position.set(-0.22, 0.2, 0.01);
+      const brow_R = brow_L.clone(); brow_R.position.x *= -1;
+      face.add(eyeW_L, eyeW_R, eye_L, eye_R, brow_L, brow_R);
+      avatar.add(face);
+
+      // Kollar ve bacaklar + pivot grupları (swing için)
+      const armL = gBox(0.35, 1.2, 0.35, limb), armR = gBox(0.35, 1.2, 0.35, limb);
+      const legL = gBox(0.45, 1.4, 0.45, limb), legR = gBox(0.45, 1.4, 0.45, limb);
+      armL.position.set(0, -0.6, 0); armR.position.copy(armL.position);
+      legL.position.set(0, -0.7, 0); legR.position.copy(legL.position);
+      const aL = new THREE.Group(), aR = new THREE.Group(), lL = new THREE.Group(), lR = new THREE.Group();
+      aL.position.set(-0.9, 2.2, 0); aR.position.set( 0.9, 2.2, 0);
+      lL.position.set(-0.3, 1.4, 0); lR.position.set( 0.3, 1.4, 0);
+      aL.add(armL); aR.add(armR); lL.add(legL); lR.add(legR);
+      avatar.add(aL, aR, lL, lR);
+
+      avatar.position.set(0, AVATAR_SIZE/2, 20); scene.add(avatar);
+
+      // Swing state'i burada atıyoruz
+      boxManSwing = { aL, aR, lL, lR, t: 0 };
+    })();
+
+    // --- Animasyon & Oyun Döngüsü ---
+    const clock = new THREE.Clock();
+
+    function gameTick(dt){
+      // Kamera yönleri
+      camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
+      right.crossVectors(fwd, up).normalize(); // sağ = fwd × up
+
+      // Tuşlar -> kamera göreli hedef hız
+      let moveX = 0, moveZ = 0;
+      if (keys.w) moveZ -= 1; if (keys.s) moveZ += 1;
+      if (keys.a) moveX -= 1; if (keys.d) moveX += 1;
+      const mag = Math.hypot(moveX, moveZ); if (mag > 0) { moveX /= mag; moveZ /= mag; }
+
+      const desired = (mag > 0)
+        ? fwd.clone().multiplyScalar(-moveZ).add(right.clone().multiplyScalar(moveX)).multiplyScalar(speed)
+        : new THREE.Vector3(0,0,0);
+
+      // Ivme / sürtünme
+      vel.x += (desired.x - vel.x) * Math.min(1, dt * 8);
+      vel.z += (desired.z - vel.z) * Math.min(1, dt * 8);
+      if (mag === 0) { const damp = Math.max(0, 1 - friction * dt); vel.x *= damp; vel.z *= damp; }
+
+      // Zemin / zıplama
+      const groundY = groundHeightAt(avatar.position.x, avatar.position.z) + AVATAR_SIZE/2;
+      const onGround = Math.abs(avatar.position.y - groundY) < 0.01;
+      if (onGround && keys.space) vel.y = jumpSpeed; else if (!onGround) vel.y -= gravity * dt; else vel.y = 0;
+
+      const prev = avatar.position.clone();
+      avatar.position.x += vel.x * dt;
+      avatar.position.y = Math.max(avatar.position.y + vel.y * dt, AVATAR_SIZE/2);
+      avatar.position.z += vel.z * dt;
+
+      // Sınırlar ve sahne engeli
+      avatar.position.x = Math.min(Math.max(avatar.position.x, minX), maxX);
+      avatar.position.z = Math.min(Math.max(avatar.position.z, minZ), maxZ);
+      if (insideStageXZ(avatar.position.x, avatar.position.z)) { avatar.position.x = prev.x; avatar.position.z = prev.z; vel.x = 0; vel.z = 0; }
+
+      // Yer seviyesi düzeltmesi
+      const newGroundY = groundHeightAt(avatar.position.x, avatar.position.z) + AVATAR_SIZE/2;
+      if (avatar.position.y < newGroundY) { avatar.position.y = newGroundY; vel.y = 0; }
+
+      // Yöne bakış (X-Z)
+      const dirY = Math.atan2(vel.x, vel.z); if (!Number.isNaN(dirY)) avatar.rotation.y = dirY;
+
+      // Kutu-insan sallama: hız ile değişen frekans & genlik, havada kollar yukarı
+      if (boxManSwing) {
+        boxManSwing.t += dt;
+        const speed2D = Math.hypot(vel.x, vel.z);
+        const freq = THREE.MathUtils.lerp(2.0, 6.0, Math.min(1, speed2D/10));
+        const amp  = THREE.MathUtils.lerp(0.1, 0.6, Math.min(1, speed2D/10));
+        const s = Math.sin(boxManSwing.t * freq);
+        boxManSwing.aL.rotation.x =  s * amp;
+        boxManSwing.aR.rotation.x = -s * amp;
+        boxManSwing.lL.rotation.x = -s * amp;
+        boxManSwing.lR.rotation.x =  s * amp;
+        if (!onGround) { boxManSwing.aL.rotation.x += 0.6; boxManSwing.aR.rotation.x += 0.6; }
+      }
+    }
+
+    function animate(){
+      requestAnimationFrame(animate);
+      const dt = Math.min(0.033, clock.getDelta());
+      gameTick(dt);
+
+      // Kamera uzaklaşma bug'ını engelle: target'taki kaymayı kameraya da uygula → mesafe korunur
+      const desiredTarget = avatar.position.clone();
+      const deltaTarget = desiredTarget.clone().sub(controls.target);
+      camera.position.add(deltaTarget);
+      controls.target.copy(desiredTarget);
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // --- Resize ---
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
