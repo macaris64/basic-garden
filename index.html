@@ -7,11 +7,16 @@
   <style>
     html, body { height: 100%; margin: 0; overflow: hidden; background: #000; }
     canvas { display: block; }
-    .hint { position: fixed; left: 12px; top: 12px; color: #fff; font: 14px/1.4 system-ui, sans-serif; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 8px; user-select: none; z-index: 2; }
+    .hud { position: fixed; left: 12px; top: 12px; color: #fff; font: 14px/1.4 system-ui, sans-serif; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 8px; user-select: none; z-index: 3; white-space: pre; }
+    .name-tag { position: fixed; left: 0; top: 0; transform: translate(-50%, -100%); padding: 4px 8px; border-radius: 6px; font: 13px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #EAF2FF; background: rgba(18,18,24,.78); border: 1px solid rgba(255,255,255,.15); box-shadow: 0 2px 8px rgba(0,0,0,.35); pointer-events: none; z-index: 4; white-space: nowrap; }
+    .name-tag.hidden { display: none; }
   </style>
 </head>
 <body>
-  <div class="hint">W-A-S-D: kamera göreli hareket · Space: zıpla · Fare: kamerayı çevir</div>
+  <!-- HUD: koordinatlar + yön -->
+  <div class="hud" id="hud">—</div>
+  <!-- Avatar etiketi -->
+  <div class="name-tag" id="nameTag">Udemy</div>
 
   <!-- import map: three + orbit -->
   <script type="importmap">
@@ -29,7 +34,7 @@
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x87b7ff);
 
-      const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 2000);
+      const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 4000);
       camera.position.set(0, 10, 16);
 
       const renderer = new THREE.WebGLRenderer({ antialias:true });
@@ -39,7 +44,7 @@
 
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true; controls.dampingFactor = 0.08; controls.enablePan = false;
-      controls.minDistance = 6; controls.maxDistance = 40; controls.maxPolarAngle = Math.PI * 0.49;
+      controls.minDistance = 6; controls.maxDistance = 100; controls.maxPolarAngle = Math.PI * 0.49;
       controls.enableKeys = false; controls.keys = {}; controls.keyPanSpeed = 0;
       controls.target.set(0, 2, 0);
 
@@ -68,15 +73,15 @@
   <!-- Garden (ground + stage) -->
   <script type="module" id="mod-garden">
     export function createGarden(THREE, scene){
-      const planeSize = 200; // garden boyutu
+      const planeSize = 400; // garden boyutu
       const ground = new THREE.Mesh(
         new THREE.PlaneGeometry(planeSize, planeSize),
         new THREE.MeshLambertMaterial({ color: 0x2faa2f })
       );
       ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
 
-      // Sol-alt köşede sahne
-      const STAGE_W = 30, STAGE_D = 20, STAGE_H = 10;
+      // Sol-alt köşede sahne — 3× büyütüldü
+      const STAGE_W = 90, STAGE_D = 60, STAGE_H = 30;
       const stage = new THREE.Mesh(new THREE.BoxGeometry(STAGE_W, STAGE_H, STAGE_D), new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.1, roughness: 0.8 }));
       stage.castShadow = true; stage.receiveShadow = true;
       stage.position.set(-planeSize/2 + STAGE_W/2, STAGE_H/2, -planeSize/2 + STAGE_D/2);
@@ -275,11 +280,15 @@
     // Inline dynamic importer — avoids bare specifiers
     async function importById(id){
       const el = document.getElementById(id);
+      if(!el) throw new Error(`Modül bulunamadı: ${id}`);
       const code = el.textContent;
       const blob = new Blob([code], { type: 'text/javascript' });
       const url = URL.createObjectURL(blob);
       try { return await import(url); } finally { URL.revokeObjectURL(url); }
     }
+
+    const hud = document.getElementById('hud');
+    const nameTag = document.getElementById('nameTag');
 
     const { createSceneSetup } = await importById('mod-scene');
     const { createInput }      = await importById('mod-input');
@@ -290,7 +299,7 @@
     const { scene, camera, renderer, controls } = createSceneSetup(THREE, OrbitControls);
     const keys = createInput();
 
-    const { ground, planeSize, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt } = createGarden(THREE, scene);
+    const { planeSize, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt } = createGarden(THREE, scene);
     const stageTopY = stage.position.y + STAGE_H/2;
 
     // Camlı oda: sahne ile aynı boyut; haritanın en sağ kenarı
@@ -304,6 +313,21 @@
     camera.position.set(avatar.position.x + 6, avatar.position.y + 8, avatar.position.z + 10);
     controls.target.copy(avatar.position);
 
+    function deg(rad){ return (rad * 180 / Math.PI); }
+    function fmt(n){ return n.toFixed(2); }
+
+    function updateNameTag(){
+      const pos = avatar.position.clone();
+      pos.y += 3.2; // kafanın biraz üstü
+      pos.project(camera);
+      const out = (Math.abs(pos.x) > 1 || Math.abs(pos.y) > 1 || pos.z > 1);
+      if(out){ nameTag.classList.add('hidden'); return; }
+      nameTag.classList.remove('hidden');
+      const x = (pos.x * 0.5 + 0.5) * innerWidth;
+      const y = (-pos.y * 0.5 + 0.5) * innerHeight;
+      nameTag.style.transform = `translate(-50%, -100%) translate(${x}px, ${y}px)`;
+    }
+
     const clock = new THREE.Clock();
     function animate(){
       requestAnimationFrame(animate);
@@ -311,6 +335,11 @@
       updateAvatar(THREE, dt, avatar, keys, camera, controls, { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock });
       controls.update();
       renderer.render(scene, camera);
+
+      // HUD güncelle
+      const heading = ((deg(avatar.rotation.y) % 360) + 360) % 360; // 0..360
+      hud.textContent = `x: ${fmt(avatar.position.x)}\ny: ${fmt(avatar.position.y)}\nz: ${fmt(avatar.position.z)}\nrotY: ${heading.toFixed(1)}°`;
+      updateNameTag();
     }
     animate();
   </script>
