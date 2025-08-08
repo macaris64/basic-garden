@@ -2,12 +2,12 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
-  <title>Garden – Tek Dosyada Modüler (Three.js + Box‑Man)</title>
+  <title>Garden – Modular Single File (Three.js + Box‑Man + Glass Room)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     html, body { height: 100%; margin: 0; overflow: hidden; background: #000; }
     canvas { display: block; }
-    .hint { position: fixed; left: 12px; top: 12px; color: #fff; font: 14px/1.4 system-ui, sans-serif; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 8px; user-select: none; -webkit-user-select: none; z-index: 2; }
+    .hint { position: fixed; left: 12px; top: 12px; color: #fff; font: 14px/1.4 system-ui, sans-serif; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 8px; user-select: none; z-index: 2; }
   </style>
 </head>
 <body>
@@ -23,99 +23,256 @@
   }
   </script>
 
-  <!-- Avatar Module (inline) -->
-  <script type="module" id="mod-avatar">
-    export function createBoxMan({ THREE, scene, startY = 1, start = { x:0, z:20 } }) {
-      const skin = new THREE.MeshStandardMaterial({ color: 0xffe0bd });
-      const limb = new THREE.MeshStandardMaterial({ color: 0x888888 });
-      const black = new THREE.MeshStandardMaterial({ color: 0x111111 });
-      const white = new THREE.MeshStandardMaterial({ color: 0xffffff });
-      const gBox = (x,y,z,m)=>{ const mesh=new THREE.Mesh(new THREE.BoxGeometry(x,y,z), m); mesh.castShadow=true; return mesh; };
+  <!-- Scene Setup -->
+  <script type="module" id="mod-scene">
+    export function createSceneSetup(THREE, OrbitControls){
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87b7ff);
 
-      const root = new THREE.Group();
-      const torso = gBox(1.2, 1.6, 0.6, skin); torso.position.y = 1.6; root.add(torso);
-      const head  = gBox(0.9, 0.9, 0.9, skin); head.position.y  = 2.65; root.add(head);
-      // yüz
-      const face = new THREE.Group(); face.position.set(0, 2.65, 0.455);
-      const eyeW_L = gBox(0.22, 0.18, 0.02, white); eyeW_L.position.set(-0.22, 0.08, 0);
-      const eyeW_R = eyeW_L.clone(); eyeW_R.position.x *= -1;
-      const eye_L = gBox(0.08, 0.08, 0.03, black); eye_L.position.set(-0.22, 0.08, 0.02);
-      const eye_R = eye_L.clone(); eye_R.position.x *= -1;
-      const brow_L = gBox(0.28, 0.05, 0.03, black); brow_L.position.set(-0.22, 0.2, 0.01);
-      const brow_R = brow_L.clone(); brow_R.position.x *= -1;
-      face.add(eyeW_L, eyeW_R, eye_L, eye_R, brow_L, brow_R); root.add(face);
+      const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 2000);
+      camera.position.set(0, 10, 16);
 
-      const armL = gBox(0.35, 1.2, 0.35, limb), armR = gBox(0.35, 1.2, 0.35, limb);
-      const legL = gBox(0.45, 1.4, 0.45, limb), legR = gBox(0.45, 1.4, 0.45, limb);
-      armL.position.set(0, -0.6, 0); armR.position.copy(armL.position);
-      legL.position.set(0, -0.7, 0); legR.position.copy(legL.position);
-      const aL = new THREE.Group(), aR = new THREE.Group(), lL = new THREE.Group(), lR = new THREE.Group();
-      aL.position.set(-0.9, 2.2, 0); aR.position.set( 0.9, 2.2, 0);
-      lL.position.set(-0.3, 1.4, 0); lR.position.set( 0.3, 1.4, 0);
-      aL.add(armL); aR.add(armR); lL.add(legL); lR.add(legR);
-      root.add(aL, aR, lL, lR);
+      const renderer = new THREE.WebGLRenderer({ antialias:true });
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.shadowMap.enabled = true;
+      document.body.appendChild(renderer.domElement);
 
-      root.position.set(start.x, startY, start.z);
-      scene.add(root);
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true; controls.dampingFactor = 0.08; controls.enablePan = false;
+      controls.minDistance = 6; controls.maxDistance = 40; controls.maxPolarAngle = Math.PI * 0.49;
+      controls.enableKeys = false; controls.keys = {}; controls.keyPanSpeed = 0;
+      controls.target.set(0, 2, 0);
 
-      const swing = { aL, aR, lL, lR, t:0 };
-      function update(dt, { vel, onGround }){
-        swing.t += dt; const speed2D = Math.hypot(vel.x, vel.z);
-        const freq = THREE.MathUtils.lerp(2.0, 6.0, Math.min(1, speed2D/10));
-        const amp  = THREE.MathUtils.lerp(0.1, 0.6, Math.min(1, speed2D/10));
-        const s = Math.sin(swing.t * freq);
-        swing.aL.rotation.x =  s * amp;
-        swing.aR.rotation.x = -s * amp;
-        swing.lL.rotation.x = -s * amp;
-        swing.lR.rotation.x =  s * amp;
-        if (!onGround) { swing.aL.rotation.x += 0.6; swing.aR.rotation.x += 0.6; }
-      }
+      scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+      const dl = new THREE.DirectionalLight(0xffffff, 0.9); dl.position.set(60,100,40); dl.castShadow = true; dl.shadow.mapSize.set(2048,2048); scene.add(dl);
 
-      return { group: root, update };
+      addEventListener('resize', ()=>{
+        camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+      });
+
+      return { scene, camera, renderer, controls };
     }
   </script>
 
-  <!-- Stage Module (inline) -->
-  <script type="module" id="mod-stage">
-    export function createStage({ THREE, scene, planeSize=200, w=30, d=20, h=10 }){
-      const mat = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.1, roughness: 0.8 });
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-      mesh.castShadow = true; mesh.receiveShadow = true;
-      mesh.position.set(-planeSize/2 + w/2, h/2, -planeSize/2 + d/2);
-      scene.add(mesh);
-      return { mesh, w, d, h };
+  <!-- Input -->
+  <script type="module" id="mod-input">
+    export function createInput(){
+      const keys = { w:false, a:false, s:false, d:false, space:false };
+      const mapKey = (e)=>{ const k=e.key; if(k===' '||k==='Spacebar') return 'space'; const low=(k||'').toLowerCase(); return low==='space'?'space':low; };
+      addEventListener('keydown',e=>{const k=mapKey(e); if(k in keys){keys[k]=true; if(k==='space') e.preventDefault();}});
+      addEventListener('keyup',  e=>{const k=mapKey(e); if(k in keys){keys[k]=false; if(k==='space') e.preventDefault();}});
+      return keys;
     }
   </script>
 
-  <!-- Garden Module (inline) -->
+  <!-- Garden (ground + stage) -->
   <script type="module" id="mod-garden">
-    export function createGarden({ THREE, scene, planeSize=200 }){
+    export function createGarden(THREE, scene){
+      const planeSize = 200; // garden boyutu
       const ground = new THREE.Mesh(
         new THREE.PlaneGeometry(planeSize, planeSize),
         new THREE.MeshLambertMaterial({ color: 0x2faa2f })
       );
       ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
-      return { ground, planeSize };
-    }
-    export function makeCollisionHelpers({ THREE, stage, planeSize, avatarHalf=1 }){
-      const insideStageXZ = (x,z)=>{
-        const sxMin = stage.mesh.position.x - stage.w/2 - avatarHalf,
-              sxMax = stage.mesh.position.x + stage.w/2 + avatarHalf,
-              szMin = stage.mesh.position.z - stage.d/2 - avatarHalf,
-              szMax = stage.mesh.position.z + stage.d/2 + avatarHalf;
+
+      // Sol-alt köşede sahne
+      const STAGE_W = 30, STAGE_D = 20, STAGE_H = 10;
+      const stage = new THREE.Mesh(new THREE.BoxGeometry(STAGE_W, STAGE_H, STAGE_D), new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.1, roughness: 0.8 }));
+      stage.castShadow = true; stage.receiveShadow = true;
+      stage.position.set(-planeSize/2 + STAGE_W/2, STAGE_H/2, -planeSize/2 + STAGE_D/2);
+      scene.add(stage);
+
+      function insideStageXZ(x, z, half=1){
+        const sxMin = stage.position.x - STAGE_W/2 - half,
+              sxMax = stage.position.x + STAGE_W/2 + half,
+              szMin = stage.position.z - STAGE_D/2 - half,
+              szMax = stage.position.z + STAGE_D/2 + half;
         return x>=sxMin && x<=sxMax && z>=szMin && z<=szMax;
-      };
-      const groundYAt = (x,z)=> insideStageXZ(x,z) ? 9999 : 0;
-      return { insideStageXZ, groundYAt };
+      }
+      const groundYAt = (x,z,half=1)=> insideStageXZ(x,z,half) ? 9999 : 0;
+
+      return { ground, planeSize, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt };
     }
   </script>
 
-  <!-- App Root (only dynamic-import inline modules via Blob URLs) -->
+  <!-- Glass Room (camlı oda) -->
+  <script type="module" id="mod-glassroom">
+    export function createGlassRoom(THREE, scene, { w, d, position, doorRatio = 0.35 }){
+      // Duvarlar: daha yüksek ve kalın
+      const h = 5.0, t = 0.25; // yükseklik, kalınlık
+      const group = new THREE.Group();
+
+      // Camlar siyah ve belirgin
+      const glass = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.5, roughness: 0.7 });
+      const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), new THREE.MeshStandardMaterial({ color: 0x303030 }));
+      floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
+
+      // Duvarlar: kuzey (-z), güney (+z, ÖN) kapılı, batı (-x), doğu (+x)
+      const north = new THREE.Mesh(new THREE.BoxGeometry(w, h, t), glass); north.position.set(0, h/2, -d/2); group.add(north);
+      const west  = new THREE.Mesh(new THREE.BoxGeometry(d, h, t), glass); west.rotation.y = Math.PI/2; west.position.set(-w/2, h/2, 0); group.add(west);
+      const east  = new THREE.Mesh(new THREE.BoxGeometry(d, h, t), glass); east.rotation.y = Math.PI/2;  east.position.set( w/2, h/2, 0); group.add(east);
+
+      const doorW = Math.max(1.2, w * doorRatio);
+      const segW = Math.max(0, (w - doorW) / 2);
+      if (segW > 0) {
+        const southL = new THREE.Mesh(new THREE.BoxGeometry(segW, h, t), glass);
+        southL.position.set(- (doorW/2 + segW/2), h/2, d/2); group.add(southL);
+        const southR = new THREE.Mesh(new THREE.BoxGeometry(segW, h, t), glass);
+        southR.position.set(  (doorW/2 + segW/2), h/2, d/2); group.add(southR);
+      }
+
+      group.position.copy(position);
+      scene.add(group);
+
+      // --- Çarpışma (sadece iç AABB + kapı) ---
+      const hx = w/2, hz = d/2;
+      const ixMin = -hx, ixMax =  hx; // iç yüzey merkez-limitleri
+      const izMin = -hz, izMax =  hz;
+
+      function isInsideInner(lx, lz, half){
+        return (lx > ixMin + half && lx < ixMax - half && lz > izMin + half && lz < izMax - half);
+      }
+
+      function roomBlock(pos, prev, half = 1){
+        const lx  = pos.x  - position.x;  const lz  = pos.z  - position.z;
+        const lpx = prev.x - position.x;  const lpz = prev.z - position.z;
+
+        const prevInside = isInsideInner(lpx, lpz, half);
+        const nowInside  = isInsideInner(lx,  lz,  half);
+
+        // Kapı bandı (Güney: z ~ +izMax)
+        const inDoorX = Math.abs(lx) <= doorW/2;
+
+        // 1) İçeriden dışarı / dışarıdan içeri — sadece kapıdan izin ver
+        const southInnerPlane = izMax - half;
+        const crossingSouthOut = (lpz <= southInnerPlane && lz >  southInnerPlane);
+        const crossingSouthIn  = (lpz >= southInnerPlane && lz <  southInnerPlane);
+        if (prevInside && !nowInside){
+          const throughDoor = crossingSouthOut && inDoorX;
+          if (!throughDoor){ pos.x = prev.x; pos.z = prev.z; return; }
+        }
+        if (!prevInside && nowInside){
+          const throughDoor = crossingSouthIn && inDoorX;
+          if (!throughDoor){ pos.x = prev.x; pos.z = prev.z; return; }
+        }
+
+        // 2) İçerideyken duvara gömülmeyi engelle (iç clamp)
+        if (prevInside && nowInside){
+          pos.x = Math.min(Math.max(pos.x, position.x + ixMin + half), position.x + ixMax - half);
+          pos.z = Math.min(Math.max(pos.z, position.z + izMin + half), position.z + izMax - half);
+        }
+      }
+
+      return { room: group, height: h, block: roomBlock };
+    }
+  </script>
+
+  <!-- Avatar (Box‑Man) -->
+  <script type="module" id="mod-avatar">
+    export function createAvatar(THREE){
+      const skin  = new THREE.MeshStandardMaterial({ color: 0xffe0bd });
+      const limb  = new THREE.MeshStandardMaterial({ color: 0x888888 });
+      const black = new THREE.MeshStandardMaterial({ color: 0x111111 });
+      const white = new THREE.MeshStandardMaterial({ color: 0xffffff });
+      const gBox = (x,y,z,m)=>{ const mesh=new THREE.Mesh(new THREE.BoxGeometry(x,y,z), m); mesh.castShadow=true; return mesh; };
+      const root  = new THREE.Group();
+      const torso = gBox(1.2, 1.6, 0.6, skin); torso.position.y = 1.6; root.add(torso);
+      const head  = gBox(0.9, 0.9, 0.9, skin); head.position.y  = 2.65; root.add(head);
+      const face = new THREE.Group(); face.position.set(0, 2.65, 0.455);
+      const eyeW_L = gBox(0.22,0.18,0.02, white); eyeW_L.position.set(-0.22,0.08,0);
+      const eyeW_R = eyeW_L.clone(); eyeW_R.position.x *= -1;
+      const eye_L  = gBox(0.08,0.08,0.03, black); eye_L.position.set(-0.22,0.08,0.02);
+      const eye_R  = eye_L.clone(); eye_R.position.x *= -1;
+      const brow_L = gBox(0.28,0.05,0.03, black); brow_L.position.set(-0.22,0.2,0.01);
+      const brow_R = brow_L.clone(); brow_R.position.x *= -1;
+      face.add(eyeW_L, eyeW_R, eye_L, eye_R, brow_L, brow_R); root.add(face);
+      const arm = gBox(0.35, 1.2, 0.35, limb), leg = gBox(0.45, 1.4, 0.45, limb);
+      const aL = new THREE.Group(), aR = new THREE.Group(), lL = new THREE.Group(), lR = new THREE.Group();
+      const armL = arm.clone(), armR = arm.clone(), legL = leg.clone(), legR = leg.clone();
+      armL.position.set(0,-0.6,0); armR.position.copy(armL.position);
+      legL.position.set(0,-0.7,0); legR.position.copy(legL.position);
+      aL.position.set(-0.9, 2.2, 0); aR.position.set( 0.9, 2.2, 0);
+      lL.position.set(-0.3, 1.4, 0); lR.position.set( 0.3, 1.4, 0);
+      aL.add(armL); aR.add(armR); lL.add(legL); lR.add(legR);
+      root.add(aL,aR,lL,lR);
+      root.userData.limbs = { aL, aR, lL, lR };
+      return root;
+    }
+
+    export function updateAvatar(THREE, dt, avatar, keys, camera, controls, helpers){
+      if(!avatar) return;
+      const { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock } = helpers;
+      const AVATAR_SIZE = 2;
+
+      const forward = new THREE.Vector3(); camera.getWorldDirection(forward); forward.y=0; forward.normalize();
+      const right   = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+
+      const moveX = (keys.d?1:0) + (keys.a?-1:0);
+      const moveZ = (keys.s?1:0) + (keys.w?-1:0);
+      const move = new THREE.Vector3().addScaledVector(forward, -moveZ).addScaledVector(right, moveX);
+      if (move.lengthSq()>0) move.normalize();
+
+      avatar.userData.vel ??= new THREE.Vector3(0,0,0);
+      const vel = avatar.userData.vel;
+      const speed = 18, gravity = 22, jumpSpeed = 8.5, friction = 10;
+      vel.x += (move.x*speed - vel.x)*Math.min(1, dt*8);
+      vel.z += (move.z*speed - vel.z)*Math.min(1, dt*8);
+      if (move.lengthSq()===0){ const damp=Math.max(0,1-friction*dt); vel.x*=damp; vel.z*=damp; }
+
+      const gY = groundYAt(avatar.position.x, avatar.position.z, AVATAR_SIZE/2) + AVATAR_SIZE/2;
+      const onGround = Math.abs(avatar.position.y - gY) < 0.01;
+      if (onGround && keys.space) vel.y = jumpSpeed; else if (!onGround) vel.y -= gravity*dt; else vel.y = 0;
+
+      const prev = avatar.position.clone();
+      avatar.position.x += vel.x*dt; avatar.position.y = Math.max(avatar.position.y + vel.y*dt, AVATAR_SIZE/2); avatar.position.z += vel.z*dt;
+
+      const minX = -planeSize/2 + AVATAR_SIZE/2, maxX = planeSize/2 - AVATAR_SIZE/2, minZ = -planeSize/2 + AVATAR_SIZE/2, maxZ = planeSize/2 - AVATAR_SIZE/2;
+      avatar.position.x = Math.min(Math.max(avatar.position.x, minX), maxX);
+      avatar.position.z = Math.min(Math.max(avatar.position.z, minZ), maxZ);
+
+      if (insideStageXZ(avatar.position.x, avatar.position.z) && (avatar.position.y - AVATAR_SIZE/2) < (stageTopY + 0.01)){
+        avatar.position.x = prev.x; avatar.position.z = prev.z; vel.x = 0; vel.z = 0;
+      }
+
+      // Camlı oda duvar çarpışmaları (kapıdan giriş serbest)
+      if (typeof roomBlock === 'function'){
+        roomBlock(avatar.position, prev, AVATAR_SIZE/2);
+      }
+
+      const nGY = groundYAt(avatar.position.x, avatar.position.z, AVATAR_SIZE/2) + AVATAR_SIZE/2;
+      if (avatar.position.y < nGY){ avatar.position.y = nGY; vel.y = 0; }
+
+      if (vel.lengthSq()>0.0001){ const dirY = Math.atan2(vel.x, vel.z); if(!Number.isNaN(dirY)) avatar.rotation.y = dirY; }
+
+      // --- Animasyon stabilitesi (ani dur/başla ve dönüşlerde jitter fix) ---
+      avatar.userData.animBlend ??= 0;            // 0..1 arası yürüyüş yoğunluğu
+      avatar.userData.swingTime ??= 0;            // faz
+      const speed2D = Math.hypot(vel.x, vel.z);
+      const targetRun = Math.min(1, speed2D / speed);
+      const blendK = 12; // tepki hızı
+      avatar.userData.animBlend += (targetRun - avatar.userData.animBlend) * Math.min(1, dt * blendK);
+      if (avatar.userData.animBlend < 0.05) avatar.userData.swingTime = 0; // neredeyse duruyorsa fazı sıfırla
+      const freq = THREE.MathUtils.lerp(2.0, 6.0, avatar.userData.animBlend);
+      avatar.userData.swingTime += dt * freq;
+      const amp  = THREE.MathUtils.lerp(0.1, 0.6, avatar.userData.animBlend);
+      const s = Math.sin(avatar.userData.swingTime);
+      const { aL, aR, lL, lR } = avatar.userData.limbs;
+      aL.rotation.x =  s * amp;
+      aR.rotation.x = -s * amp;
+      lL.rotation.x = -s * amp;
+      lR.rotation.x =  s * amp;
+      if(!onGround){ aL.rotation.x += 0.6; aR.rotation.x += 0.6; }
+
+      const desiredTarget = avatar.position.clone(); const deltaTarget = desiredTarget.clone().sub(controls.target); camera.position.add(deltaTarget); controls.target.copy(desiredTarget);
+    }
+  </script>
+
+  <!-- Main -->
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'orbit';
 
-    // Utility: import inline module by creating a blob URL (no bare specifier!)
+    // Inline dynamic importer — avoids bare specifiers
     async function importById(id){
       const el = document.getElementById(id);
       const code = el.textContent;
@@ -124,107 +281,38 @@
       try { return await import(url); } finally { URL.revokeObjectURL(url); }
     }
 
-    const AvatarMod = await importById('mod-avatar');
-    const StageMod  = await importById('mod-stage');
-    const GardenMod = await importById('mod-garden');
+    const { createSceneSetup } = await importById('mod-scene');
+    const { createInput }      = await importById('mod-input');
+    const { createGarden }     = await importById('mod-garden');
+    const { createGlassRoom }  = await importById('mod-glassroom');
+    const { createAvatar, updateAvatar } = await importById('mod-avatar');
 
-    // --- Scene Setup ---
-    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x87b7ff);
-    const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 1000); camera.position.set(0,10,16);
-    const renderer = new THREE.WebGLRenderer({ antialias:true }); renderer.setSize(innerWidth, innerHeight); renderer.shadowMap.enabled = true; document.body.appendChild(renderer.domElement);
+    const { scene, camera, renderer, controls } = createSceneSetup(THREE, OrbitControls);
+    const keys = createInput();
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true; controls.dampingFactor = 0.08; controls.enablePan = false;
-    controls.minDistance = 6; controls.maxDistance = 40; controls.maxPolarAngle = Math.PI * 0.49;
-    controls.target.set(0, 2, 0);
-    // OrbitControls keyboard off (WASD bizde)
-    controls.enableKeys = false; controls.keys = {}; controls.keyPanSpeed = 0;
+    const { ground, planeSize, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt } = createGarden(THREE, scene);
+    const stageTopY = stage.position.y + STAGE_H/2;
 
-    // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const dl = new THREE.DirectionalLight(0xffffff, 0.9); dl.position.set(60,100,40); dl.castShadow = true; dl.shadow.mapSize.set(2048,2048); scene.add(dl);
+    // Camlı oda: sahne ile aynı boyut; haritanın en sağ kenarı
+    const roomPos = new THREE.Vector3( planeSize/2 - STAGE_W/2, 0, 0 );
+    const { room: glassRoom, block: roomBlock } = createGlassRoom(THREE, scene, { w: STAGE_W, d: STAGE_D, position: roomPos });
 
-    // Garden + Stage
-    const garden = GardenMod.createGarden({ THREE, scene, planeSize:200 });
-    const stage  = StageMod.createStage({ THREE, scene, planeSize: garden.planeSize, w:30, d:20, h:10 });
-    const { insideStageXZ, groundYAt } = GardenMod.makeCollisionHelpers({ THREE, stage, planeSize: garden.planeSize, avatarHalf: 1 });
+    // Avatar: camlı odanın içinde spawn
+    const avatar = createAvatar(THREE); scene.add(avatar);
+    avatar.position.set(roomPos.x, 1, roomPos.z);
 
-    // Avatar
-    const avatar = AvatarMod.createBoxMan({ THREE, scene, startY: 1, start:{x:0,z:20} });
+    camera.position.set(avatar.position.x + 6, avatar.position.y + 8, avatar.position.z + 10);
+    controls.target.copy(avatar.position);
 
-    // Input
-    const keys = { w:false,a:false,s:false,d:false,space:false };
-    const mapKey = (e)=>{ const k=e.key; if(k===' '||k==='Spacebar') return 'space'; const low=(k||'').toLowerCase(); return low==='space'?'space':low; };
-    addEventListener('keydown',e=>{const k=mapKey(e); if(k in keys){keys[k]=true; if(k==='space') e.preventDefault();}});
-    addEventListener('keyup',  e=>{const k=mapKey(e); if(k in keys){keys[k]=false; if(k==='space') e.preventDefault();}});
-
-    // Physics
-    const AVATAR_SIZE = 2, speed=18, friction=10, jumpSpeed=8.5, gravity=22;
-    const bounds = { minX:-garden.planeSize/2+AVATAR_SIZE/2, maxX:garden.planeSize/2-AVATAR_SIZE/2, minZ:-garden.planeSize/2+AVATAR_SIZE/2, maxZ:garden.planeSize/2-AVATAR_SIZE/2 };
-    const vel = new THREE.Vector3();
-    const up = new THREE.Vector3(0,1,0), fwd=new THREE.Vector3(), right=new THREE.Vector3();
-
-    // Loop
     const clock = new THREE.Clock();
-    function tick(dt){
-      // camera-relative axes
-      camera.getWorldDirection(fwd); fwd.y=0; fwd.normalize();
-      right.crossVectors(fwd, up).normalize();
-
-      // input → desired vel
-      let mx=0,mz=0; if(keys.w)mz-=1; if(keys.s)mz+=1; if(keys.a)mx-=1; if(keys.d)mx+=1; const mag=Math.hypot(mx,mz); if(mag>0){mx/=mag;mz/=mag;}
-      const desired = mag>0 ? fwd.clone().multiplyScalar(-mz).add(right.clone().multiplyScalar(mx)).multiplyScalar(speed) : new THREE.Vector3();
-      vel.x += (desired.x-vel.x)*Math.min(1, dt*8); vel.z += (desired.z-vel.z)*Math.min(1, dt*8);
-      if(mag===0){ const damp=Math.max(0,1-friction*dt); vel.x*=damp; vel.z*=damp; }
-
-      // gravity/jump
-      const gY = groundYAt(avatar.group.position.x, avatar.group.position.z) + AVATAR_SIZE/2;
-      const onGround = Math.abs(avatar.group.position.y - gY) < 0.01;
-      if(onGround && keys.space) vel.y = jumpSpeed; else if(!onGround) vel.y -= gravity*dt; else vel.y = 0;
-
-      const prev = avatar.group.position.clone();
-      avatar.group.position.x += vel.x*dt;
-      avatar.group.position.y = Math.max(avatar.group.position.y + vel.y*dt, AVATAR_SIZE/2);
-      avatar.group.position.z += vel.z*dt;
-
-      // bounds & stage block
-      avatar.group.position.x = Math.min(Math.max(avatar.group.position.x, bounds.minX), bounds.maxX);
-      avatar.group.position.z = Math.min(Math.max(avatar.group.position.z, bounds.minZ), bounds.maxZ);
-      if(insideStageXZ(avatar.group.position.x, avatar.group.position.z)){
-        avatar.group.position.copy(prev); vel.x = 0; vel.z = 0;
-      }
-
-      const nGY = groundYAt(avatar.group.position.x, avatar.group.position.z) + AVATAR_SIZE/2;
-      if(avatar.group.position.y < nGY){ avatar.group.position.y = nGY; vel.y = 0; }
-
-      // face move dir
-      const dirY = Math.atan2(vel.x, vel.z); if(!Number.isNaN(dirY)) avatar.group.rotation.y = dirY;
-
-      // avatar anim
-      avatar.update(dt, { vel, onGround });
-    }
-
     function animate(){
       requestAnimationFrame(animate);
       const dt = Math.min(0.033, clock.getDelta());
-      tick(dt);
-
-      // keep camera distance (no auto-zoom)
-      const desiredTarget = avatar.group.position.clone();
-      const delta = desiredTarget.clone().sub(controls.target);
-      camera.position.add(delta);
-      controls.target.copy(desiredTarget);
-
+      updateAvatar(THREE, dt, avatar, keys, camera, controls, { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock });
       controls.update();
       renderer.render(scene, camera);
     }
-
     animate();
-
-    // Resize
-    addEventListener('resize', ()=>{
-      camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
-    });
   </script>
 </body>
 </html>
