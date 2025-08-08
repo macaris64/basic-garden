@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
-  <title>Garden – Modular Single File (Refactor: factories & modules)</title>
+  <title>Garden – Modular Single File (Refactor + GlassRoom Roof)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     html, body { height: 100%; margin: 0; overflow: hidden; background: #000; }
@@ -15,10 +15,10 @@
 <body>
   <!-- HUD: koordinatlar + yön -->
   <div class="hud" id="hud">—</div>
-  <!-- Ana avatar etiketi (ileride çoklu avatar yaparsak çoğaltılabilir) -->
+  <!-- Avatar etiketi -->
   <div class="name-tag" id="nameTag">Udemy</div>
 
-  <!-- import map -->
+  <!-- import map: three + orbit -->
   <script type="importmap">
   {
     "imports": {
@@ -28,7 +28,7 @@
   }
   </script>
 
-  <!-- Utils (saf yardımcılar) -->
+  <!-- Utils -->
   <script type="module" id="mod-utils">
     export const deg = (rad)=> (rad * 180 / Math.PI);
     export const fmt = (n)=> Number(n).toFixed(2);
@@ -106,32 +106,88 @@
     }
   </script>
 
-  <!-- Glass Room (camlı oda) – Kapı BATI duvarında (sahneye doğru) -->
+  <!-- Glass Room (camlı oda) – Alt bant: yüksek siyah; Üst bant: STAGE_H/2 hücreler (Siyah > Cam) | Kapı BATI duvarında | ÜSTÜ CAM KAPAK -->
   <script type="module" id="mod-glassroom">
     export function createGlassRoom(THREE, scene, { w, d, position, doorRatio = 0.35 }){
-      const h = 5.0, t = 0.25;
+      // Alt bant (baseH) avatar'dan yüksek; Üst bant (upperH) sahne yüksekliğinin yarısı; Toplam yükseklik h = baseH + upperH
+      const baseH  = 2.6;      // avatar (≈2) üstünde, önceki görünüme yakın
+      const upperH = 15.0;     // STAGE_H/2 (30/2)
+      const h = baseH + upperH;
+      const t = 0.25;           // kalınlık
+
       const group = new THREE.Group();
 
-      const glass = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.5, roughness: 0.7 });
-      const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), new THREE.MeshStandardMaterial({ color: 0x303030 }));
+      // Malzemeler
+      const matPillar = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.6, roughness: 0.5 }); // siyah
+      const matGlass  = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, metalness: 0.0, roughness: 0.15 }); // beyaz cam
+      const matFloor  = new THREE.MeshStandardMaterial({ color: 0x303030 });
+
+      // Zemin
+      const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), matFloor);
       floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
 
-      const north = new THREE.Mesh(new THREE.BoxGeometry(w, h, t), glass); north.position.set(0, h/2, -d/2); group.add(north);
-      const south = new THREE.Mesh(new THREE.BoxGeometry(w, h, t), glass); south.position.set(0, h/2,  d/2); group.add(south);
-      const east  = new THREE.Mesh(new THREE.BoxGeometry(d, h, t), glass); east.rotation.y = Math.PI/2; east.position.set( w/2, h/2, 0); group.add(east);
-
-      // KAPI: BATI (-x) duvarında açıklık – kapı genişliği d'ye göre
+      // === ALT BANT: TAM SİYAH (avatar'dan yüksek) ===
+      const northBase = new THREE.Mesh(new THREE.BoxGeometry(w, baseH, t), matPillar); northBase.position.set(0, baseH/2, -d/2); group.add(northBase);
+      const southBase = new THREE.Mesh(new THREE.BoxGeometry(w, baseH, t), matPillar); southBase.position.set(0, baseH/2,  d/2); group.add(southBase);
+      const eastBase  = new THREE.Mesh(new THREE.BoxGeometry(d, baseH, t), matPillar); eastBase.rotation.y = Math.PI/2; eastBase.position.set( w/2, baseH/2, 0); group.add(eastBase);
       const doorW = Math.max(1.2, d * doorRatio);
-      const segD = Math.max(0, (d - doorW) / 2);
-      if (segD > 0) {
-        const westL = new THREE.Mesh(new THREE.BoxGeometry(segD, h, t), glass); westL.rotation.y = Math.PI/2; westL.position.set(-w/2, h/2, -(doorW/2 + segD/2)); group.add(westL);
-        const westR = new THREE.Mesh(new THREE.BoxGeometry(segD, h, t), glass); westR.rotation.y = Math.PI/2; westR.position.set(-w/2, h/2,  (doorW/2 + segD/2)); group.add(westR);
+      const segZ = Math.max(0, (d - doorW) / 2);
+      if (segZ > 0) {
+        const westBaseL = new THREE.Mesh(new THREE.BoxGeometry(segZ, baseH, t), matPillar); westBaseL.rotation.y = Math.PI/2; westBaseL.position.set(-w/2, baseH/2, -(doorW/2 + segZ/2)); group.add(westBaseL);
+        const westBaseR = new THREE.Mesh(new THREE.BoxGeometry(segZ, baseH, t), matPillar); westBaseR.rotation.y = Math.PI/2; westBaseR.position.set(-w/2, baseH/2,  (doorW/2 + segZ/2)); group.add(westBaseR);
       }
+
+      // === ÜST BANT: HÜCRELER (Siyah kolon geniş > Cam panel dar) ===
+      const colW   = 2.4;   // siyah kolon daha geniş
+      const panelW = 1.2;   // cam panel daha dar
+      const cell   = colW + panelW;
+      const yUpperMid = baseH + upperH/2;
+
+      function buildUpperStrip({ along, L, fixedVal, isWestDoor=false }){
+        const count = Math.ceil(L / cell);
+        for (let i=0;i<count;i++){
+          const base = -L/2 + i*cell;
+          // Kolon (geniş)
+          const colLen = Math.min(colW, L - i*cell);
+          if (colLen > 0){
+            const col = new THREE.Mesh(
+              along==='x' ? new THREE.BoxGeometry(colLen, upperH, t) : new THREE.BoxGeometry(t, upperH, colLen),
+              matPillar
+            );
+            if (along==='x') col.position.set(base + colLen/2, yUpperMid, fixedVal);
+            else              col.position.set(fixedVal, yUpperMid, base + colLen/2);
+            if (!(isWestDoor && Math.abs(col.position.z) <= doorW/2)) group.add(col);
+          }
+          // Panel (dar)
+          const panLen = Math.min(panelW, L - (i*cell + colLen));
+          if (panLen > 0){
+            const pan = new THREE.Mesh(
+              along==='x' ? new THREE.BoxGeometry(panLen, upperH, t) : new THREE.BoxGeometry(t, upperH, panLen),
+              matGlass
+            );
+            if (along==='x') pan.position.set(base + colLen + panLen/2, yUpperMid, fixedVal);
+            else              pan.position.set(fixedVal, yUpperMid, base + colLen + panLen/2);
+            if (!(isWestDoor && Math.abs(pan.position.z) <= doorW/2)) group.add(pan);
+          }
+        }
+      }
+
+      // Kuzey/Güney/Doğu/Batı üst bantları
+      buildUpperStrip({ along:'x', L:w, fixedVal:-d/2, isWestDoor:false });
+      buildUpperStrip({ along:'x', L:w, fixedVal: d/2, isWestDoor:false });
+      buildUpperStrip({ along:'z', L:d, fixedVal: w/2, isWestDoor:false });
+      buildUpperStrip({ along:'z', L:d, fixedVal:-w/2, isWestDoor:true });
+
+      // === ÜST KAPAK: BEYAZ CAM ÇATI ===
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), matGlass);
+      roof.position.set(0, h + t/2, 0); // duvarların üst hizasından hemen sonra ince bir cam plaka
+      roof.castShadow = false; roof.receiveShadow = false;
+      group.add(roof);
 
       group.position.copy(position);
       scene.add(group);
 
-      // Çarpışma (iç AABB + batı kapısı)
+      // --- Çarpışma (iç AABB + KAPI BATI) — LOGIC AYNI ---
       const hx = w/2, hz = d/2;
       const ixMin = -hx, ixMax =  hx; // iç limitler
       const izMin = -hz, izMax =  hz;
@@ -174,7 +230,7 @@
     }
   </script>
 
-  <!-- Avatar Factory + Animator (refactor) -->
+  <!-- Avatar Factory + Animator -->
   <script type="module" id="mod-entities">
     export function createAvatarMesh(THREE, materials){
       const { skin, limb, black, white } = materials;
@@ -218,7 +274,7 @@
       };
     }
 
-    // Orijinal hareket/animasyon mantığı (hiç değiştirilmedi)
+    // Hareket/animasyon mantığı — DEĞİŞMEDİ
     export function updateAvatar(THREE, dt, avatar, keys, camera, controls, helpers){
       if(!avatar) return;
       const { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock } = helpers;
@@ -263,6 +319,7 @@
 
       if (vel.lengthSq()>0.0001){ const dirY = Math.atan2(vel.x, vel.z); if(!Number.isNaN(dirY)) avatar.rotation.y = dirY; }
 
+      // Animasyon stabilitesi — aynı
       avatar.userData.animBlend ??= 0;            
       avatar.userData.swingTime ??= 0;            
       const speed2D = Math.hypot(vel.x, vel.z);
@@ -300,7 +357,6 @@
       try { return await import(url); } finally { URL.revokeObjectURL(url); }
     }
 
-    // modülleri yükle
     const utils                = await importById('mod-utils');
     const { createSceneSetup } = await importById('mod-scene');
     const { createInput }      = await importById('mod-input');
