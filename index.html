@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
-  <title>Garden – Modular Single File (Refactor + GlassRoom Roof)</title>
+  <title>Garden – Modular Single File (Three.js + Box‑Man + Glass Room)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     html, body { height: 100%; margin: 0; overflow: hidden; background: #000; }
@@ -16,7 +16,7 @@
   <!-- HUD: koordinatlar + yön -->
   <div class="hud" id="hud">—</div>
   <!-- Avatar etiketi -->
-  <div class="name-tag" id="nameTag">Udemy</div>
+  <div class="name-tag" id="nameTag">macaris64</div>
 
   <!-- import map: three + orbit -->
   <script type="importmap">
@@ -76,22 +76,53 @@
     }
   </script>
 
-  <!-- Garden (ground + stage) -->
+  <!-- Garden (ground + stage + lights + screen) | Basamaklar KALDIRILDI -->
   <script type="module" id="mod-garden">
     export function createGarden(THREE, scene){
-      const planeSize = 400; // aynı
+      const planeSize = 400; // büyük bahçe
       const ground = new THREE.Mesh(
         new THREE.PlaneGeometry(planeSize, planeSize),
         new THREE.MeshLambertMaterial({ color: 0x2faa2f })
       );
       ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
 
-      // Sahne: X/Y aynı, Z ortada; derinlik 90
+      // Sahne (X sabit solda, Z ortada)
       const STAGE_W = 90, STAGE_D = 90, STAGE_H = 30;
-      const stage = new THREE.Mesh(new THREE.BoxGeometry(STAGE_W, STAGE_H, STAGE_D), new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.1, roughness: 0.8 }));
+      const stageMat = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.1, roughness: 0.8 });
+      const stage = new THREE.Mesh(new THREE.BoxGeometry(STAGE_W, STAGE_H, STAGE_D), stageMat);
       stage.castShadow = true; stage.receiveShadow = true;
       stage.position.set(-planeSize/2 + STAGE_W/2, STAGE_H/2, 0);
       scene.add(stage);
+
+      // Sahne ışıkları: üstten 3 spot
+      const spots = new THREE.Group();
+      const spotY = STAGE_H + 20;
+      const zOff = STAGE_D * 0.3;
+      [ -zOff, 0, zOff ].forEach((z)=>{
+        const s = new THREE.SpotLight(0xffffff, 1.2, 120, THREE.MathUtils.degToRad(28), 0.4, 1.0);
+        s.position.set(stage.position.x, spotY, z);
+        s.target.position.set(stage.position.x, STAGE_H*0.5, 0);
+        scene.add(s.target);
+        s.castShadow = true;
+        spots.add(s);
+        const head = new THREE.Mesh(new THREE.BoxGeometry(1.2,1.2,1.2), new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0x111111, metalness:0.5, roughness:0.4 }));
+        head.position.copy(s.position);
+        head.castShadow = false; head.receiveShadow = false;
+        spots.add(head);
+      });
+      scene.add(spots);
+
+      // Sunum ekranı: sahnenin üstünde, DOĞUya bakan beyaz panel — biraz DAHA ARKADA
+      const screenW = STAGE_W * 0.9;
+      const screenH = STAGE_H * 0.6;
+      const screen = new THREE.Mesh(
+        new THREE.PlaneGeometry(screenW, screenH),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, metalness:0.0, roughness:0.25, side: THREE.DoubleSide })
+      );
+      // "Arkasında" = sahnenin arka tarafına (BATI yönüne) doğru az geri çekildi
+      screen.position.set(stage.position.x - STAGE_W*0.2, STAGE_H + 10, 0);
+      screen.rotation.y = -Math.PI/2; // doğu
+      scene.add(screen);
 
       function insideStageXZ(x, z, half=1){
         const sxMin = stage.position.x - STAGE_W/2 - half,
@@ -106,126 +137,80 @@
     }
   </script>
 
-  <!-- Glass Room (camlı oda) – Alt bant: yüksek siyah; Üst bant: STAGE_H/2 hücreler (Siyah > Cam) | Kapı BATI duvarında | ÜSTÜ CAM KAPAK -->
+  <!-- Glass Room (camlı oda) – Alt siyah bant + üst hücreler (Siyah > Cam) + Cam çatı; Kapı BATI -->
   <script type="module" id="mod-glassroom">
     export function createGlassRoom(THREE, scene, { w, d, position, doorRatio = 0.35 }){
-      // Alt bant (baseH) avatar'dan yüksek; Üst bant (upperH) sahne yüksekliğinin yarısı; Toplam yükseklik h = baseH + upperH
-      const baseH  = 2.6;      // avatar (≈2) üstünde, önceki görünüme yakın
-      const upperH = 15.0;     // STAGE_H/2 (30/2)
+      const baseH  = 2.6;      // avatar üstü alt bant
+      const upperH = 15.0;     // sahne yüksekliğinin yarısı
       const h = baseH + upperH;
-      const t = 0.25;           // kalınlık
+      const t = 0.25;
 
       const group = new THREE.Group();
-
-      // Malzemeler
-      const matPillar = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.6, roughness: 0.5 }); // siyah
-      const matGlass  = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, metalness: 0.0, roughness: 0.15 }); // beyaz cam
+      const matPillar = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.6, roughness: 0.5 });
+      const matGlass  = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, metalness: 0.0, roughness: 0.15 });
       const matFloor  = new THREE.MeshStandardMaterial({ color: 0x303030 });
 
-      // Zemin
       const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), matFloor);
       floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
 
-      // === ALT BANT: TAM SİYAH (avatar'dan yüksek) ===
+      // Alt bant (kapı BATI boşluklu)
+      const doorW = Math.max(1.2, d * doorRatio);
+      const segZ = Math.max(0, (d - doorW) / 2);
       const northBase = new THREE.Mesh(new THREE.BoxGeometry(w, baseH, t), matPillar); northBase.position.set(0, baseH/2, -d/2); group.add(northBase);
       const southBase = new THREE.Mesh(new THREE.BoxGeometry(w, baseH, t), matPillar); southBase.position.set(0, baseH/2,  d/2); group.add(southBase);
       const eastBase  = new THREE.Mesh(new THREE.BoxGeometry(d, baseH, t), matPillar); eastBase.rotation.y = Math.PI/2; eastBase.position.set( w/2, baseH/2, 0); group.add(eastBase);
-      const doorW = Math.max(1.2, d * doorRatio);
-      const segZ = Math.max(0, (d - doorW) / 2);
       if (segZ > 0) {
         const westBaseL = new THREE.Mesh(new THREE.BoxGeometry(segZ, baseH, t), matPillar); westBaseL.rotation.y = Math.PI/2; westBaseL.position.set(-w/2, baseH/2, -(doorW/2 + segZ/2)); group.add(westBaseL);
         const westBaseR = new THREE.Mesh(new THREE.BoxGeometry(segZ, baseH, t), matPillar); westBaseR.rotation.y = Math.PI/2; westBaseR.position.set(-w/2, baseH/2,  (doorW/2 + segZ/2)); group.add(westBaseR);
       }
 
-      // === ÜST BANT: HÜCRELER (Siyah kolon geniş > Cam panel dar) ===
-      const colW   = 2.4;   // siyah kolon daha geniş
-      const panelW = 1.2;   // cam panel daha dar
-      const cell   = colW + panelW;
-      const yUpperMid = baseH + upperH/2;
-
+      // Üst bant: hücreler (Siyah kolon geniş > Cam panel dar)
+      const colW=2.4, panelW=1.2, cell=colW+panelW; const yUpperMid = baseH + upperH/2;
       function buildUpperStrip({ along, L, fixedVal, isWestDoor=false }){
         const count = Math.ceil(L / cell);
         for (let i=0;i<count;i++){
           const base = -L/2 + i*cell;
-          // Kolon (geniş)
           const colLen = Math.min(colW, L - i*cell);
           if (colLen > 0){
-            const col = new THREE.Mesh(
-              along==='x' ? new THREE.BoxGeometry(colLen, upperH, t) : new THREE.BoxGeometry(t, upperH, colLen),
-              matPillar
-            );
-            if (along==='x') col.position.set(base + colLen/2, yUpperMid, fixedVal);
-            else              col.position.set(fixedVal, yUpperMid, base + colLen/2);
+            const col = new THREE.Mesh(along==='x'? new THREE.BoxGeometry(colLen, upperH, t) : new THREE.BoxGeometry(t, upperH, colLen), matPillar);
+            if (along==='x') col.position.set(base + colLen/2, yUpperMid, fixedVal); else col.position.set(fixedVal, yUpperMid, base + colLen/2);
             if (!(isWestDoor && Math.abs(col.position.z) <= doorW/2)) group.add(col);
           }
-          // Panel (dar)
           const panLen = Math.min(panelW, L - (i*cell + colLen));
           if (panLen > 0){
-            const pan = new THREE.Mesh(
-              along==='x' ? new THREE.BoxGeometry(panLen, upperH, t) : new THREE.BoxGeometry(t, upperH, panLen),
-              matGlass
-            );
-            if (along==='x') pan.position.set(base + colLen + panLen/2, yUpperMid, fixedVal);
-            else              pan.position.set(fixedVal, yUpperMid, base + colLen + panLen/2);
+            const pan = new THREE.Mesh(along==='x'? new THREE.BoxGeometry(panLen, upperH, t) : new THREE.BoxGeometry(t, upperH, panLen), matGlass);
+            if (along==='x') pan.position.set(base + colLen + panLen/2, yUpperMid, fixedVal); else pan.position.set(fixedVal, yUpperMid, base + colLen + panLen/2);
             if (!(isWestDoor && Math.abs(pan.position.z) <= doorW/2)) group.add(pan);
           }
         }
       }
-
-      // Kuzey/Güney/Doğu/Batı üst bantları
       buildUpperStrip({ along:'x', L:w, fixedVal:-d/2, isWestDoor:false });
       buildUpperStrip({ along:'x', L:w, fixedVal: d/2, isWestDoor:false });
       buildUpperStrip({ along:'z', L:d, fixedVal: w/2, isWestDoor:false });
-      buildUpperStrip({ along:'z', L:d, fixedVal:-w/2, isWestDoor:true });
+      buildUpperStrip({ along:'z', L:d, fixedVal:-w/2, isWestDoor:true  });
 
-      // === ÜST KAPAK: BEYAZ CAM ÇATI ===
+      // Cam çatı
       const roof = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), matGlass);
-      roof.position.set(0, h + t/2, 0); // duvarların üst hizasından hemen sonra ince bir cam plaka
-      roof.castShadow = false; roof.receiveShadow = false;
-      group.add(roof);
+      roof.position.set(0, h + t/2, 0); group.add(roof);
 
       group.position.copy(position);
       scene.add(group);
 
-      // --- Çarpışma (iç AABB + KAPI BATI) — LOGIC AYNI ---
-      const hx = w/2, hz = d/2;
-      const ixMin = -hx, ixMax =  hx; // iç limitler
-      const izMin = -hz, izMax =  hz;
-
-      function isInsideInner(lx, lz, half){
-        return (lx > ixMin + half && lx < ixMax - half && lz > izMin + half && lz < izMax - half);
-      }
-
+      // Çarpışma mantığı (değişmedi)
+      const hx = w/2, hz = d/2; const ixMin=-hx, ixMax=hx, izMin=-hz, izMax=hz;
+      function isInsideInner(lx, lz, half){ return (lx > ixMin + half && lx < ixMax - half && lz > izMin + half && lz < izMax - half); }
       function roomBlock(pos, prev, half = 1){
-        const lx  = pos.x  - position.x;  const lz  = pos.z  - position.z;
-        const lpx = prev.x - position.x;  const lpz = prev.z - position.z;
-
-        const prevInside = isInsideInner(lpx, lpz, half);
-        const nowInside  = isInsideInner(lx,  lz,  half);
-
-        // Kapı bandı (BATI: x ~ ixMin)
-        const inDoorZ = Math.abs(lz) <= doorW/2;
-
-        // İçeriden dışarı / dışarıdan içeri — sadece batı kapıdan izin ver
-        const westInnerPlane = ixMin + half;
-        const crossingWestOut = (lpx >= westInnerPlane && lx <  westInnerPlane);
-        const crossingWestIn  = (lpx <= westInnerPlane && lx >  westInnerPlane);
-        if (prevInside && !nowInside){
-          const throughDoor = crossingWestOut && inDoorZ;
-          if (!throughDoor){ pos.x = prev.x; pos.z = prev.z; return; }
-        }
-        if (!prevInside && nowInside){
-          const throughDoor = crossingWestIn && inDoorZ;
-          if (!throughDoor){ pos.x = prev.x; pos.z = prev.z; return; }
-        }
-
-        // İçerideyken duvar clamp'i
+        const lx=pos.x-position.x, lz=pos.z-position.z, lpx=prev.x-position.x, lpz=prev.z-position.z;
+        const prevInside=isInsideInner(lpx,lpz,half), nowInside=isInsideInner(lx,lz,half);
+        const inDoorZ = Math.abs(lz) <= doorW/2; const westInnerPlane = ixMin + half;
+        const crossingWestOut=(lpx>=westInnerPlane && lx<westInnerPlane), crossingWestIn=(lpx<=westInnerPlane && lx>westInnerPlane);
+        if (prevInside && !nowInside){ const throughDoor=crossingWestOut && inDoorZ; if(!throughDoor){ pos.x=prev.x; pos.z=prev.z; return; } }
+        if (!prevInside && nowInside){ const throughDoor=crossingWestIn  && inDoorZ; if(!throughDoor){ pos.x=prev.x; pos.z=prev.z; return; } }
         if (prevInside && nowInside){
           pos.x = Math.min(Math.max(pos.x, position.x + ixMin + half), position.x + ixMax - half);
           pos.z = Math.min(Math.max(pos.z, position.z + izMin + half), position.z + izMax - half);
         }
       }
-
       return { room: group, height: h, block: roomBlock };
     }
   </script>
@@ -338,7 +323,7 @@
       lR.rotation.x =  s * amp;
       if(!onGround){ aL.rotation.x += 0.6; aR.rotation.x += 0.6; }
 
-      const desiredTarget = avatar.position.clone(); const deltaTarget = desiredTarget.clone().sub(controls.target); camera.position.add(deltaTarget); controls.target.copy(desiredTarget);
+      const desiredTarget = avatar.position.clone(); const deltaTarget = desiredTarget.clone().sub(controls.target); camera.position.add(deltaTarget); controls.target.copy(avatar.position);
     }
   </script>
 
@@ -412,7 +397,10 @@
 
       // HUD
       const heading = ((utils.deg(avatar.rotation.y) % 360) + 360) % 360;
-      hud.textContent = `x: ${utils.fmt(avatar.position.x)}\ny: ${utils.fmt(avatar.position.y)}\nz: ${utils.fmt(avatar.position.z)}\nrotY: ${heading.toFixed(1)}°`;
+      hud.textContent = `x: ${utils.fmt(avatar.position.x)}
+y: ${utils.fmt(avatar.position.y)}
+z: ${utils.fmt(avatar.position.z)}
+rotY: ${heading.toFixed(1)}°`;
       updateNameTag();
     }
     animate();
