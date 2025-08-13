@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
-  <title>Garden – Modular Single File (Three.js + Box‑Man + Glass Room + Portal, 5 Instances)</title>
+  <title>Garden – Modular Single File (Three.js + Box‑Man + Glass Room + Portal, 5 Instances + Faz 7 Marquee)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     html, body { height: 100%; margin: 0; overflow: hidden; background: #000; }
@@ -580,6 +580,77 @@
     }
   </script>
 
+  <!-- FAZ 7: Üst Direkler + Kayan Yazı Marquee -->
+  <script type="module" id="mod-marquee">
+    export function createMarquee(THREE, scene, { stage, dims, text="Welcome to Garden — Session #" + Math.floor(Math.random()*10000), panelW=30, panelH=3, poleH=8 }){
+      const group = new THREE.Group(); scene.add(group);
+
+      // Direkler (sahnenin sağ ve solundan)
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.6, roughness: 0.4 });
+      const poleGeo = new THREE.CylinderGeometry(0.35, 0.45, poleH, 12);
+
+      // Stage ön kenarı (izleyici tarafı varsayımı: -Z yönü)
+      const frontZ = stage.position.z - dims.STAGE_D/2 - 2; // sahnenin biraz önünde
+      const leftX  = stage.position.x - dims.STAGE_W/2 + 6;
+      const rightX = stage.position.x + dims.STAGE_W/2 - 6;
+
+      const poleL = new THREE.Mesh(poleGeo, poleMat); poleL.position.set(leftX, poleH/2, frontZ); poleL.castShadow=true; poleL.receiveShadow=true; group.add(poleL);
+      const poleR = new THREE.Mesh(poleGeo, poleMat); poleR.position.set(rightX, poleH/2, frontZ); poleR.castShadow=true; poleR.receiveShadow=true; group.add(poleR);
+
+      // Üst bağlantı travers (ince çubuk)
+      const barGeo = new THREE.BoxGeometry(Math.abs(rightX-leftX), 0.2, 0.4);
+      const barMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, metalness: 0.5, roughness: 0.5 });
+      const bar = new THREE.Mesh(barGeo, barMat); bar.position.set((leftX+rightX)/2, poleH-0.7, frontZ); bar.castShadow=true; group.add(bar);
+
+      // Panel (kayan yazı)
+      const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      const texture = new THREE.CanvasTexture(canvas); texture.minFilter = THREE.LinearFilter; texture.magFilter = THREE.LinearFilter;
+      const panelGeo = new THREE.PlaneGeometry(panelW, panelH);
+      const panelMat = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+      const panel = new THREE.Mesh(panelGeo, panelMat);
+      panel.position.set((leftX+rightX)/2, poleH-1.5, frontZ);
+      panel.rotation.y = Math.PI; // izleyiciye dönük
+      group.add(panel);
+
+      // Canvas çizimi
+      const state = { text, offset: 0, speed: 80, needsScroll: false };
+      function redraw(){
+        const pad = 24; // px
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        // arkaplan ve çerçeve
+        ctx.fillStyle = 'rgba(8,11,18,0.92)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.strokeStyle = 'rgba(120,160,255,0.35)'; ctx.lineWidth = 4; ctx.strokeRect(2,2,canvas.width-4,canvas.height-4);
+        // metin
+        ctx.font = '700 64px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+        ctx.fillStyle = '#E8F0FF';
+        const m = ctx.measureText(state.text);
+        const textW = Math.ceil(m.width);
+        const viewW = canvas.width - pad*2;
+        state.needsScroll = textW > viewW;
+        if (!state.needsScroll){
+          const x = (canvas.width - textW)/2; const y = canvas.height/2 + 24;
+          ctx.fillText(state.text, x, y);
+        } else {
+          // wrap için iki kez çiz
+          const y = canvas.height/2 + 24;
+          let x = pad - (state.offset % (textW + pad));
+          while (x < canvas.width){
+            ctx.fillText(state.text, x, y);
+            x += textW + pad;
+          }
+        }
+        texture.needsUpdate = true;
+      }
+      redraw();
+
+      function setText(t){ state.text = String(t||''); state.offset = 0; redraw(); }
+      function update(dt){ if(state.needsScroll){ state.offset += state.speed * dt; redraw(); } }
+
+      return { group, setText, update };
+    }
+  </script>
+
   <!-- Main -->
   <script type="module">
     import * as THREE from 'three';
@@ -596,6 +667,7 @@
     const { AvatarFactory, updateAvatar }          = await importById('mod-entities');
     const { createWorldFX }                        = await importById('mod-worldfx');
     const { createPortalSystem, createPresetController } = await importById('mod-portal');
+    const { createMarquee }                        = await importById('mod-marquee');
 
     const hud = document.getElementById('hud');
     const nameTag = document.getElementById('nameTag');
@@ -640,13 +712,22 @@
       dims: { planeSize, STAGE_W, STAGE_D, STAGE_H },
     });
 
+    // FAZ 7: Marquee kurulumu (metin örneği: tarih + instance bilgisi)
+    function currentSessionText(){
+      const now = new Date();
+      const pad = (n)=> String(n).padStart(2,'0');
+      const stamp = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      return `Garden Live • ${stamp} • Instance: ${portal.getSelected().title} • Kullanıcı: macaris64 • W/A/S/D + SPACE`;
+    }
+    const marquee = createMarquee(THREE, scene, { stage, dims: { STAGE_W, STAGE_D }, text: currentSessionText(), panelW: 30, panelH: 3, poleH: 8 });
+
     // UI / Teleport akışı — tüm ID’ler aynı spawn (varsayılan)
     function spawnDefault(){
       avatar.position.set(planeSize/2 - STAGE_W/2, 1, 0);
       controls.target.copy(avatar.position);
       camera.position.set(avatar.position.x + 12, avatar.position.y + 8, avatar.position.z + 0);
     }
-    btnTeleport.addEventListener('click', ()=>{ portal.closeUI(); portal.teleportWith((id)=>{ applyPreset(id); spawnDefault(); }); });
+    btnTeleport.addEventListener('click', ()=>{ portal.closeUI(); portal.teleportWith((id)=>{ applyPreset(id); spawnDefault(); marquee.setText(currentSessionText()); }); });
 
     // Yakınlık tespiti (otomatik aç/kapat)
     let uiOpen = false;
@@ -663,8 +744,8 @@
     // Klavye: listede yukarı/aşağı + ESC/Enter
     addEventListener('keydown', (e)=>{
       if (!portalUI.classList.contains('visible')) return;
-      if (e.key==='ArrowDown'){ portal.moveSel(+1); }
-      if (e.key==='ArrowUp'){ portal.moveSel(-1); }
+      if (e.key==='ArrowDown'){ portal.moveSel(+1); marquee.setText(currentSessionText()); }
+      if (e.key==='ArrowUp'){ portal.moveSel(-1); marquee.setText(currentSessionText()); }
       if (e.key==='Escape'){ portal.closeUI(); }
       if (e.key==='Enter'){ btnTeleport.click(); }
     });
@@ -685,6 +766,7 @@
       updateAvatar(THREE, dt, avatar, keys, camera, controls, { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock, buildingBlock, boardBlock });
       worldfx.update(dt);
       updatePortalProximity();
+      marquee.update(dt);
       adaptiveQuality();
       controls.update();
       renderer.render(scene, camera);
