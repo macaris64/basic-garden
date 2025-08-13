@@ -32,15 +32,17 @@
   <script type="module" id="mod-utils">
     export const deg = (rad)=> (rad * 180 / Math.PI);
     export const fmt = (n)=> Number(n).toFixed(2);
+    export function lerp(a,b,t){ return a + (b-a)*t; }
+    export function clamp01(v){ return Math.max(0, Math.min(1, v)); }
   </script>
 
-  <!-- Scene Setup -->
+  <!-- Scene Setup (amb + sun referansları) -->
   <script type="module" id="mod-scene">
     export function createSceneSetup(THREE, OrbitControls){
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0x87b7ff);
 
-      const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 4000);
+      const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 8000);
       camera.position.set(0, 10, 16);
 
       const renderer = new THREE.WebGLRenderer({ antialias:true });
@@ -54,14 +56,14 @@
       controls.enableKeys = false; controls.keys = {}; controls.keyPanSpeed = 0;
       controls.target.set(0, 2, 0);
 
-      scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-      const dl = new THREE.DirectionalLight(0xffffff, 0.9); dl.position.set(60,100,40); dl.castShadow = true; dl.shadow.mapSize.set(2048,2048); scene.add(dl);
+      const amb = new THREE.AmbientLight(0xffffff, 0.5); scene.add(amb);
+      const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(60,100,40); sun.castShadow = true; sun.shadow.mapSize.set(2048,2048); scene.add(sun);
 
       addEventListener('resize', ()=>{
         camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
       });
 
-      return { scene, camera, renderer, controls };
+      return { scene, camera, renderer, controls, amb, sun };
     }
   </script>
 
@@ -76,18 +78,21 @@
     }
   </script>
 
-  <!-- Garden (ground + stage + SIDE screen w/ collision) | Spotlar ve arka ekran KALDIRILDI -->
+  <!-- Garden (CIRCULAR ground + stage + side board w/ collision) -->
   <script type="module" id="mod-garden">
     export function createGarden(THREE, scene){
-      const planeSize = 400; // büyük bahçe
-      const ground = new THREE.Mesh(
-        new THREE.PlaneGeometry(planeSize, planeSize),
+      const planeSize = 400; // sahne ölçeği referansı
+
+      // Dairesel zemin: silindirin başladığı yerden biraz küçük (curtain r ~ planeSize*0.8)
+      const groundR = planeSize * 0.78; // elips istenirse x/z farklı ölçeklenebilir
+      const circle = new THREE.Mesh(
+        new THREE.CircleGeometry(groundR, 128),
         new THREE.MeshLambertMaterial({ color: 0x2faa2f })
       );
-      ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
+      circle.rotation.x = -Math.PI/2; circle.receiveShadow = true; scene.add(circle);
 
       // Sahne (X sabit solda, Z ortada)
-      const STAGE_W = 90, STAGE_D = 90, STAGE_H = 15; // yükseklik YARIYA indirildi (30 -> 15)
+      const STAGE_W = 90, STAGE_D = 90, STAGE_H = 15;
       const stageMat = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.1, roughness: 0.8 });
       const stage = new THREE.Mesh(new THREE.BoxGeometry(STAGE_W, STAGE_H, STAGE_D), stageMat);
       stage.castShadow = true; stage.receiveShadow = true;
@@ -95,7 +100,6 @@
       scene.add(stage);
 
       // *** Sunum tahtası (kare) — sahnenin önünün hemen sağı ***
-      // Uç noktalar: (-110, 10, -50) -> (-110, 10, -130)
       const boardSize = 80;                   // kare kenar
       const boardX = -110;                    // düzlem X sabit
       const boardZMin = -130, boardZMax = -50;// Z aralığı
@@ -106,33 +110,24 @@
         new THREE.MeshStandardMaterial({ color: 0xffffff, metalness:0.0, roughness:0.25, side: THREE.DoubleSide })
       );
       board.position.set(boardX, boardYCenter, boardZCenter);
-      board.rotation.y = -Math.PI/2; // doğuya bakar; düzlem YZ üzerinde
+      board.rotation.y = -Math.PI/2; // doğu
       scene.add(board);
 
-      // --- Sunum tahtası ÇARPIŞMA fonksiyonu (dikey düzlem, X=boardX) ---
+      // --- Sunum tahtası ÇARPIŞMA ---
       function boardBlock(pos, prev, half = 1){
-        // Tahtanın kapsadığı Y ve Z aralığı
-        const yMin = 0, yMax = boardSize; // taban sahne tabanı ile hizalı
+        const yMin = 0, yMax = boardSize;
         const zMin = boardZMin, zMax = boardZMax;
         const withinZ = (pos.z > zMin - half && pos.z < zMax + half) || (prev.z > zMin - half && prev.z < zMax + half);
         const withinY = (pos.y - half < yMax && pos.y + half > yMin) || (prev.y - half < yMax && prev.y + half > yMin);
         if (!withinZ || !withinY) return;
-        // Düzlemi geçiş tespiti: farklı taraflarda mıyız?
         const sidePrev = Math.sign(prev.x - boardX);
         const sideNow  = Math.sign(pos.x  - boardX);
-        if (sidePrev === 0 && sideNow === 0) return; // tam üzerindeyse sessizce geç
-        if (sidePrev === 0 && sideNow !== 0){
-          // Üstünde başlayıp bir tarafa kaymış; geri it
-          pos.x = boardX + (sideNow > 0 ? half : -half);
-          return;
-        }
-        if (sidePrev !== 0 && sideNow !== 0 && sidePrev !== sideNow){
-          // Düzlemi kesmiş -> geri al
-          pos.x = prev.x;
-          return;
-        }
+        if (sidePrev === 0 && sideNow === 0) return;
+        if (sidePrev === 0 && sideNow !== 0){ pos.x = boardX + (sideNow > 0 ? half : -half); return; }
+        if (sidePrev !== 0 && sideNow !== 0 && sidePrev !== sideNow){ pos.x = prev.x; return; }
       }
 
+      // Dikdörtgen platform çarpışması (sahneden aşağı düşmeyi önleme)
       function insideStageXZ(x, z, half=1){
         const sxMin = stage.position.x - STAGE_W/2 - half,
               sxMax = stage.position.x + STAGE_W/2 + half,
@@ -140,17 +135,31 @@
               szMax = stage.position.z + STAGE_D/2 + half;
         return x>=sxMin && x<=sxMax && z>=szMin && z<=szMax;
       }
-      const groundYAt = (x,z,half=1)=> insideStageXZ(x,z,half) ? 9999 : 0;
 
-      return { ground, planeSize, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt, boardBlock };
+      // Eliptik/dairesel zemin fonksiyonu
+      const a = groundR, b = groundR; // elips istiyorsak b'yi farklı seçebiliriz
+      function insideEllipse(x, z){
+        // Merkez (0,0) varsayıldı. Farklı merkez için (x-cx,z-cz)
+        const v = (x*x)/(a*a) + (z*z)/(b*b);
+        return v <= 1.0;
+      }
+
+      // Avatar için yer yüksekliği: elips içindeyse 0, değilse "uçurum"
+      const groundYAt = (x,z,half=1)=> {
+        // Sahnenin üstünden geçişi önleyen mevcut kuralı koruyoruz
+        if (insideStageXZ(x,z,half)) return 9999;
+        return insideEllipse(x,z) ? 0 : 9999;
+      };
+
+      return { ground: circle, planeSize, groundR, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt, boardBlock };
     }
   </script>
 
-  <!-- Glass Room (camlı oda) – Alt siyah bant + üst hücreler (Siyah > Cam) + Cam çatı; Kapı BATI -->
+  <!-- Glass Room (camlı oda) – Kapı BATI -->
   <script type="module" id="mod-glassroom">
     export function createGlassRoom(THREE, scene, { w, d, position, doorRatio = 0.35 }){
-      const baseH  = 2.6;      // avatar üstü alt bant
-      const upperH = 15.0;     // sahne yüksekliğinin yarısı
+      const baseH  = 2.6;      // alt bant
+      const upperH = 15.0;     // üst bant
       const h = baseH + upperH;
       const t = 0.25;
 
@@ -162,7 +171,6 @@
       const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), matFloor);
       floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
 
-      // Alt bant (kapı BATI boşluklu)
       const doorW = Math.max(1.2, d * doorRatio);
       const segZ = Math.max(0, (d - doorW) / 2);
       const northBase = new THREE.Mesh(new THREE.BoxGeometry(w, baseH, t), matPillar); northBase.position.set(0, baseH/2, -d/2); group.add(northBase);
@@ -173,7 +181,6 @@
         const westBaseR = new THREE.Mesh(new THREE.BoxGeometry(segZ, baseH, t), matPillar); westBaseR.rotation.y = Math.PI/2; westBaseR.position.set(-w/2, baseH/2,  (doorW/2 + segZ/2)); group.add(westBaseR);
       }
 
-      // Üst bant: hücreler (Siyah kolon geniş > Cam panel dar)
       const colW=2.4, panelW=1.2, cell=colW+panelW; const yUpperMid = baseH + upperH/2;
       function buildUpperStrip({ along, L, fixedVal, isWestDoor=false }){
         const count = Math.ceil(L / cell);
@@ -198,19 +205,18 @@
       buildUpperStrip({ along:'z', L:d, fixedVal: w/2, isWestDoor:false });
       buildUpperStrip({ along:'z', L:d, fixedVal:-w/2, isWestDoor:true  });
 
-      // Cam çatı
       const roof = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), matGlass);
       roof.position.set(0, h + t/2, 0); group.add(roof);
 
       group.position.copy(position);
       scene.add(group);
 
-      // Çarpışma mantığı (değişmedi)
       const hx = w/2, hz = d/2; const ixMin=-hx, ixMax=hx, izMin=-hz, izMax=hz;
       function isInsideInner(lx, lz, half){ return (lx > ixMin + half && lx < ixMax - half && lz > izMin + half && lz < izMax - half); }
       function roomBlock(pos, prev, half = 1){
         const lx=pos.x-position.x, lz=pos.z-position.z, lpx=prev.x-position.x, lpz=prev.z-position.z;
         const prevInside=isInsideInner(lpx,lpz,half), nowInside=isInsideInner(lx,lz,half);
+        const doorW = Math.max(1.2, d * 0.35);
         const inDoorZ = Math.abs(lz) <= doorW/2; const westInnerPlane = ixMin + half;
         const crossingWestOut=(lpx>=westInnerPlane && lx<westInnerPlane), crossingWestIn=(lpx<=westInnerPlane && lx>westInnerPlane);
         if (prevInside && !nowInside){ const throughDoor=crossingWestOut && inDoorZ; if(!throughDoor){ pos.x=prev.x; pos.z=prev.z; return; } }
@@ -229,7 +235,7 @@
     export function createNftBuilding(THREE, scene, {
       w = 60, d = 40, h = 22,
       position = new THREE.Vector3(5, 0, 135),
-      doorRatio = 0.35, // KUZEY (N, -Z) duvarında kapı
+      doorRatio = 0.35,
     } = {}){
       const group = new THREE.Group();
       const purple = new THREE.MeshStandardMaterial({ color: 0x7a3cf6, metalness: 0.35, roughness: 0.6 });
@@ -237,28 +243,22 @@
       const whiteM = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.0, roughness: 0.2, side: THREE.DoubleSide });
       const t = 0.3; // duvar kalınlığı
 
-      // Zemin (mor)
       const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), purple);
       floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
 
-      // Duvarlar: N (-z, KAPI), S (+z), W (-x), E (+x)
       const doorW = Math.max(2.0, w * doorRatio);
       const doorH = Math.min(3.2, h * 0.5);
       const hx = w/2, hz = d/2;
 
-      // KUZEY — kapılı
       const segW = Math.max(0, (w - doorW)/2);
       if (segW > 0){
         const northL = new THREE.Mesh(new THREE.BoxGeometry(segW, h, t), purple); northL.position.set(-(doorW/2 + segW/2), h/2, -hz); group.add(northL);
         const northR = new THREE.Mesh(new THREE.BoxGeometry(segW, h, t), purple); northR.position.set( (doorW/2 + segW/2), h/2, -hz); group.add(northR);
       }
-      // Güney
       const south = new THREE.Mesh(new THREE.BoxGeometry(w, h, t), purple); south.position.set(0, h/2,  hz); group.add(south);
-      // Batı & Doğu
       const west  = new THREE.Mesh(new THREE.BoxGeometry(d, h, t), purple); west.rotation.y = Math.PI/2;  west.position.set(-hx, h/2, 0); group.add(west);
       const east  = new THREE.Mesh(new THREE.BoxGeometry(d, h, t), purple); east.rotation.y = Math.PI/2;   east.position.set( hx, h/2, 0); group.add(east);
 
-      // İç paneller (siyah çerçeveli beyaz) — KAPI DUVARI HARİÇ her duvarda 3 adet
       const fw = 8, fh = 6, gap = 3, inset = t/2 + 0.02, border = 0.4, depth = 0.2;
       function makeFrame(){
         const panel = new THREE.Mesh(new THREE.PlaneGeometry(fw-2*border, fh-2*border), whiteM);
@@ -270,8 +270,7 @@
         const g = new THREE.Group(); g.add(panel, top, bot, lef, rig); return g;
       }
       function addTriple(which){
-        // 3 çerçeveyi yatayda hizala (merkezlenmiş)
-        const totalW = 3*fw + 2*gap; const y = h*0.55; // orta bant
+        const totalW = 3*fw + 2*gap; const y = h*0.55;
         for(let i=0;i<3;i++){
           const g = makeFrame();
           const lx = -totalW/2 + i*(fw+gap) + fw/2;
@@ -288,7 +287,6 @@
       group.position.copy(position);
       scene.add(group);
 
-      // Çarpışma — kapı sadece KUZEY duvarında (z ~ -hz), |x| <= doorW/2 ve y <= doorH iken serbest
       const ixMin=-hx, ixMax=hx, izMin=-hz, izMax=hz;
       function isInside(lx,lz,half){ return (lx > ixMin + half && lx < ixMax - half && lz > izMin + half && lz < izMax - half); }
       function buildingBlock(pos, prev, half=1){
@@ -389,6 +387,7 @@
       const prev = avatar.position.clone();
       avatar.position.x += vel.x*dt; avatar.position.y = Math.max(avatar.position.y + vel.y*dt, AVATAR_SIZE/2); avatar.position.z += vel.z*dt;
 
+      // Kare sınır clamp'ı büyük bırakıyoruz; gerçek sınırı groundYAt belirler
       const minX = -planeSize/2 + AVATAR_SIZE/2, maxX = planeSize/2 - AVATAR_SIZE/2, minZ = -planeSize/2 + AVATAR_SIZE/2, maxZ = planeSize/2 - AVATAR_SIZE/2;
       avatar.position.x = Math.min(Math.max(avatar.position.x, minX), maxX);
       avatar.position.z = Math.min(Math.max(avatar.position.z, minZ), maxZ);
@@ -397,7 +396,6 @@
         avatar.position.x = prev.x; avatar.position.z = prev.z; vel.x = 0; vel.z = 0;
       }
 
-      // Çarpışmalar: camlı oda, NFT bina, sunum tahtası
       if (typeof roomBlock === 'function')      roomBlock(avatar.position, prev, AVATAR_SIZE/2);
       if (typeof buildingBlock === 'function')  buildingBlock(avatar.position, prev, AVATAR_SIZE/2);
       if (typeof boardBlock === 'function')     boardBlock(avatar.position, prev, AVATAR_SIZE/2);
@@ -407,7 +405,7 @@
 
       if (vel.lengthSq()>0.0001){ const dirY = Math.atan2(vel.x, vel.z); if(!Number.isNaN(dirY)) avatar.rotation.y = dirY; }
 
-      // Animasyon stabilitesi — aynı
+      // Animasyon
       avatar.userData.animBlend ??= 0;            
       avatar.userData.swingTime ??= 0;            
       const speed2D = Math.hypot(vel.x, vel.z);
@@ -430,12 +428,94 @@
     }
   </script>
 
+  <!-- WORLD FX (Phase 1: Fog + Horizon Curtain + Gradient Sky) (Phase 2: Day/Night) (Phase 3: Distant Props) -->
+  <script type="module" id="mod-worldfx">
+    import * as THREE from 'three';
+    export function createWorldFX(THREE, scene, { planeSize }, { amb, sun }){
+      const group = new THREE.Group(); scene.add(group);
+
+      // --- Phase 1: Fog + Horizon Curtain + Gradient Sky Dome ---
+      let skyTopDay = new THREE.Color(0x87b7ff);
+      let skyBotDay = new THREE.Color(0xcfe8ff);
+      let skyTopNight = new THREE.Color(0x0a0d1a);
+      let skyBotNight = new THREE.Color(0x182033);
+
+      scene.fog = new THREE.FogExp2(skyBotDay.clone(), 0.0012);
+
+      const skyGeo = new THREE.SphereGeometry(5000, 32, 16);
+      const skyMat = new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        uniforms: {
+          topColor:   { value: skyTopDay.clone() },
+          bottomColor:{ value: skyBotDay.clone() },
+          offset:     { value: 33 },
+          exponent:   { value: 0.6 }
+        },
+        vertexShader: `varying vec3 vWorldPosition; void main(){ vec4 p = modelMatrix * vec4(position,1.0); vWorldPosition = p.xyz; gl_Position = projectionMatrix * viewMatrix * p; }`,
+        fragmentShader: `uniform vec3 topColor; uniform vec3 bottomColor; uniform float offset; uniform float exponent; varying vec3 vWorldPosition; void main(){ float h = normalize(vWorldPosition + vec3(0.0, offset, 0.0)).y; float f = max(pow(max(h, 0.0), exponent), 0.0); gl_FragColor = vec4( mix(bottomColor, topColor, f), 1.0 ); }`
+      });
+      const sky = new THREE.Mesh(skyGeo, skyMat); group.add(sky);
+
+      // Horizon curtain: içe bakan geniş silindir
+      const r = planeSize*0.8; // bahçenin ötesinde
+      const curtain = new THREE.Mesh(
+        new THREE.CylinderGeometry(r, r, 200, 48, 1, true),
+        new THREE.MeshStandardMaterial({ color: 0x7aa7ff, metalness:0.0, roughness:1.0, side: THREE.BackSide, transparent:true, opacity:0.85 })
+      );
+      curtain.position.y = 100; // yarı yükseklik
+      group.add(curtain);
+
+      // --- Phase 3: Distant props ring (hafif ağaçlar) ---
+      const props = new THREE.Group(); group.add(props);
+      function addTree(px, pz){
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.6, 4, 6), new THREE.MeshStandardMaterial({ color: 0x6e4b2a, roughness:0.9 }));
+        trunk.position.set(px, 2, pz); trunk.castShadow=true; props.add(trunk);
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(2.5, 6, 8), new THREE.MeshStandardMaterial({ color: 0x2b7a2b, roughness:0.8 }));
+        cone.position.set(px, 7, pz); cone.castShadow=true; props.add(cone);
+      }
+      const ringR = planeSize*0.6 + 40; const count = 28; // dairesel zeminin içinde kalır
+      for(let i=0;i<count;i++){
+        const a = i / count * Math.PI*2;
+        const px = Math.cos(a) * ringR;
+        const pz = Math.sin(a) * ringR;
+        addTree(px, pz);
+      }
+
+      // --- Phase 2: Day/Night basit harmanlama ---
+      function dayNightFactor(date){
+        const h = date.getHours() + date.getMinutes()/60; // 0..24
+        const t = Math.cos((h-12)/12 * Math.PI); // 1 (öğlen) -> -1 (gece yarısı)
+        return (t+1)/2; // 0..1 (0=gece,1=gündüz)
+      }
+      function updateLights(t){
+        const colTop = skyTopNight.clone().lerp(skyTopDay, t);
+        const colBot = skyBotNight.clone().lerp(skyBotDay, t);
+        sky.material.uniforms.topColor.value.copy(colTop);
+        sky.material.uniforms.bottomColor.value.copy(colBot);
+        const fogCol = colBot.clone();
+        scene.fog.color.copy(fogCol);
+        amb.intensity = 0.25 + 0.55*t;
+        sun.intensity = 0.2  + 0.9*t;
+        sun.color.copy(new THREE.Color(0xffe7b0).lerp(new THREE.Color(0xffffff), t));
+        curtain.material.color.copy(colBot.clone().lerp(colTop, 0.3));
+      }
+
+      updateLights(dayNightFactor(new Date()));
+
+      return {
+        update(){
+          const t = dayNightFactor(new Date());
+          updateLights(t);
+        }
+      };
+    }
+  </script>
+
   <!-- Main -->
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'orbit';
 
-    // Inline dynamic importer — avoids bare specifiers
     async function importById(id){
       const el = document.getElementById(id);
       if(!el) throw new Error(`Modül bulunamadı: ${id}`);
@@ -445,21 +525,22 @@
       try { return await import(url); } finally { URL.revokeObjectURL(url); }
     }
 
-    const utils                = await importById('mod-utils');
-    const { createSceneSetup } = await importById('mod-scene');
-    const { createInput }      = await importById('mod-input');
-    const { createGarden }     = await importById('mod-garden');
-    const { createGlassRoom }  = await importById('mod-glassroom');
-    const { createNftBuilding }= await importById('mod-nft-building');
-    const { AvatarFactory, updateAvatar } = await importById('mod-entities');
+    const utils                          = await importById('mod-utils');
+    const { createSceneSetup }           = await importById('mod-scene');
+    const { createInput }                = await importById('mod-input');
+    const { createGarden }               = await importById('mod-garden');
+    const { createGlassRoom }            = await importById('mod-glassroom');
+    const { createNftBuilding }          = await importById('mod-nft-building');
+    const { AvatarFactory, updateAvatar }= await importById('mod-entities');
+    const { createWorldFX }              = await importById('mod-worldfx');
 
     const hud = document.getElementById('hud');
     const nameTag = document.getElementById('nameTag');
 
-    const { scene, camera, renderer, controls } = createSceneSetup(THREE, OrbitControls);
+    const { scene, camera, renderer, controls, amb, sun } = createSceneSetup(THREE, OrbitControls);
     const keys = createInput();
 
-    const { planeSize, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt, boardBlock } = createGarden(THREE, scene);
+    const { planeSize, groundR, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt, boardBlock } = createGarden(THREE, scene);
     const stageTopY = stage.position.y + STAGE_H/2;
 
     // Camlı oda: sahne ile aynı boyut; haritanın en sağ kenarı
@@ -469,6 +550,9 @@
     // NFT Bina: garden sol-orta; merkez (5,0,135)
     const nftPos = new THREE.Vector3(5, 0, 135);
     const { building: nftBuilding, block: buildingBlock } = createNftBuilding(THREE, scene, { w: 60, d: 40, h: 22, position: nftPos, doorRatio: 0.35 });
+
+    // WORLD FX (Phases 1-3)
+    const worldfx = createWorldFX(THREE, scene, { planeSize }, { amb, sun });
 
     // Avatar
     const avatarFactory = AvatarFactory(THREE);
@@ -500,6 +584,7 @@
       requestAnimationFrame(animate);
       const dt = Math.min(0.033, clock.getDelta());
       updateAvatar(THREE, dt, avatar, keys, camera, controls, { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock, buildingBlock, boardBlock });
+      worldfx.update(dt);
       controls.update();
       renderer.render(scene, camera);
 
