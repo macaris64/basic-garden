@@ -2,14 +2,35 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
-  <title>Garden – Modular Single File (Three.js + Box‑Man + Glass Room)</title>
+  <title>Garden – Modular Single File (Three.js + Box‑Man + Glass Room + Portal, 5 Instances)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     html, body { height: 100%; margin: 0; overflow: hidden; background: #000; }
     canvas { display: block; }
-    .hud { position: fixed; left: 12px; top: 12px; color: #fff; font: 14px/1.4 system-ui, sans-serif; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 8px; user-select: none; z-index: 3; white-space: pre; }
-    .name-tag { position: fixed; left: 0; top: 0; transform: translate(-50%, -100%); padding: 4px 8px; border-radius: 6px; font: 13px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #EAF2FF; background: rgba(18,18,24,.78); border: 1px solid rgba(255,255,255,.15); box-shadow: 0 2px 8px rgba(0,0,0,.35); pointer-events: none; z-index: 4; white-space: nowrap; }
+    .hud { position: fixed; left: 12px; top: 12px; color: #fff; font: 14px/1.4 system-ui, sans-serif; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 8px; user-select: none; z-index: 5; white-space: pre; }
+    .name-tag { position: fixed; left: 0; top: 0; transform: translate(-50%, -100%); padding: 4px 8px; border-radius: 6px; font: 13px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #EAF2FF; background: rgba(18,18,24,.78); border: 1px solid rgba(255,255,255,.15); box-shadow: 0 2px 8px rgba(0,0,0,.35); pointer-events: none; z-index: 6; white-space: nowrap; }
     .name-tag.hidden { display: none; }
+
+    /* Portal UI */
+    .portal-ui { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(90vw, 520px); background: rgba(10,12,18,.85); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 20px 60px rgba(0,0,0,.5); color: #E8F0FF; font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; border-radius: 14px; z-index: 10; display: none; }
+    .portal-ui.visible { display: block; }
+    .portal-ui header { padding: 14px 16px; font-weight: 600; letter-spacing: .2px; border-bottom: 1px solid rgba(255,255,255,.08); }
+    .portal-ui .list { max-height: 46vh; overflow: auto; padding: 6px; }
+    .portal-ui .item { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:10px; cursor:pointer; border:1px solid transparent; }
+    .portal-ui .item:hover { background: rgba(255,255,255,.05); }
+    .portal-ui .item.selected { border-color: rgba(120,160,255,.45); background: rgba(120,160,255,.08); }
+    .portal-ui footer { display:flex; gap:10px; justify-content:flex-end; padding: 12px 16px; border-top: 1px solid rgba(255,255,255,.08); }
+    .btn { padding:8px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06); color:#E8F0FF; cursor:pointer; }
+    .btn.primary { border-color: rgba(130,180,255,.6); background: rgba(130,180,255,.18); }
+    .btn:active { transform: translateY(1px); }
+
+    /* Fade overlay for teleport */
+    .fade { position: fixed; inset: 0; background: #000; pointer-events: none; opacity: 0; transition: opacity .5s ease; z-index: 9; }
+    .fade.on { opacity: 1; }
+
+    /* Portal hint */
+    .hint { position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%); padding: 8px 12px; border-radius: 12px; color: #dfe9ff; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.14); font: 13px/1.3 system-ui, sans-serif; z-index: 7; display:none; }
+    .hint.visible { display:block; }
   </style>
 </head>
 <body>
@@ -17,6 +38,18 @@
   <div class="hud" id="hud">—</div>
   <!-- Avatar etiketi -->
   <div class="name-tag" id="nameTag">macaris64</div>
+
+  <!-- Portal UI -->
+  <div class="portal-ui" id="portalUI" role="dialog" aria-modal="true">
+    <header>Teleport — başka bir garden seç</header>
+    <div class="list" id="portalList"></div>
+    <footer>
+      <button class="btn" id="btnCancel">İptal (ESC)</button>
+      <button class="btn primary" id="btnTeleport">Git</button>
+    </footer>
+  </div>
+  <div class="hint" id="portalHint">Portala yaklaştın. Seçim paneli açıldı. Uzaklaşınca kapanır.</div>
+  <div class="fade" id="fade"></div>
 
   <!-- import map: three + orbit -->
   <script type="importmap">
@@ -36,7 +69,7 @@
     export function clamp01(v){ return Math.max(0, Math.min(1, v)); }
   </script>
 
-  <!-- Scene Setup (amb + sun referansları) -->
+  <!-- Scene Setup (amb + sun referansları) + adaptive quality (Faz 6 parçası) -->
   <script type="module" id="mod-scene">
     export function createSceneSetup(THREE, OrbitControls){
       const scene = new THREE.Scene();
@@ -45,9 +78,10 @@
       const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 8000);
       camera.position.set(0, 10, 16);
 
-      const renderer = new THREE.WebGLRenderer({ antialias:true });
+      const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference: 'high-performance' });
       renderer.setSize(innerWidth, innerHeight);
       renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       document.body.appendChild(renderer.domElement);
 
       const controls = new OrbitControls(camera, renderer.domElement);
@@ -59,11 +93,29 @@
       const amb = new THREE.AmbientLight(0xffffff, 0.5); scene.add(amb);
       const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(60,100,40); sun.castShadow = true; sun.shadow.mapSize.set(2048,2048); scene.add(sun);
 
+      // Adaptive pixel ratio (Faz 6)
+      let frameCount = 0; let lastTime = performance.now(); let targetPR = Math.min(1.5, window.devicePixelRatio || 1);
+      renderer.setPixelRatio(targetPR);
+      function adaptiveQuality(){
+        frameCount++;
+        const now = performance.now();
+        if (now - lastTime > 1500){
+          const fps = frameCount / ((now - lastTime)/1000);
+          frameCount = 0; lastTime = now;
+          if (fps < 45) targetPR = Math.max(0.75, targetPR - 0.1);
+          else if (fps > 58) targetPR = Math.min(1.75, targetPR + 0.05);
+          renderer.setPixelRatio(targetPR);
+          const m = (targetPR >= 1.2) ? 2048 : (targetPR >= 1.0 ? 1536 : 1024);
+          sun.shadow.mapSize.set(m,m);
+          sun.shadow.needsUpdate = true;
+        }
+      }
+
       addEventListener('resize', ()=>{
         camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
       });
 
-      return { scene, camera, renderer, controls, amb, sun };
+      return { scene, camera, renderer, controls, amb, sun, adaptiveQuality };
     }
   </script>
 
@@ -83,8 +135,8 @@
     export function createGarden(THREE, scene){
       const planeSize = 400; // sahne ölçeği referansı
 
-      // Dairesel zemin: silindirin başladığı yerden biraz küçük (curtain r ~ planeSize*0.8)
-      const groundR = planeSize * 0.78; // elips istenirse x/z farklı ölçeklenebilir
+      // Dairesel zemin
+      const groundR = planeSize * 0.78; // elips istenirse anisotropic scale
       const circle = new THREE.Mesh(
         new THREE.CircleGeometry(groundR, 128),
         new THREE.MeshLambertMaterial({ color: 0x2faa2f })
@@ -99,35 +151,26 @@
       stage.position.set(-planeSize/2 + STAGE_W/2, STAGE_H/2, 0);
       scene.add(stage);
 
-      // *** Sunum tahtası (kare) — sahnenin önünün hemen sağı ***
-      const boardSize = 80;                   // kare kenar
-      const boardX = -110;                    // düzlem X sabit
-      const boardZMin = -130, boardZMax = -50;// Z aralığı
-      const boardZCenter = (boardZMin + boardZMax) * 0.5; // -90
-      const boardYCenter = boardSize * 0.5;   // 40 (taban 0)
+      // Sunum tahtası
+      const boardSize = 80; const boardX = -110; const boardZMin = -130, boardZMax = -50;
+      const boardZCenter = (boardZMin + boardZMax) * 0.5; const boardYCenter = boardSize * 0.5;
       const board = new THREE.Mesh(
         new THREE.PlaneGeometry(boardSize, boardSize),
         new THREE.MeshStandardMaterial({ color: 0xffffff, metalness:0.0, roughness:0.25, side: THREE.DoubleSide })
       );
-      board.position.set(boardX, boardYCenter, boardZCenter);
-      board.rotation.y = -Math.PI/2; // doğu
-      scene.add(board);
+      board.position.set(boardX, boardYCenter, boardZCenter); board.rotation.y = -Math.PI/2; scene.add(board);
 
-      // --- Sunum tahtası ÇARPIŞMA ---
       function boardBlock(pos, prev, half = 1){
-        const yMin = 0, yMax = boardSize;
-        const zMin = boardZMin, zMax = boardZMax;
+        const yMin = 0, yMax = boardSize; const zMin = boardZMin, zMax = boardZMax;
         const withinZ = (pos.z > zMin - half && pos.z < zMax + half) || (prev.z > zMin - half && prev.z < zMax + half);
         const withinY = (pos.y - half < yMax && pos.y + half > yMin) || (prev.y - half < yMax && prev.y + half > yMin);
         if (!withinZ || !withinY) return;
-        const sidePrev = Math.sign(prev.x - boardX);
-        const sideNow  = Math.sign(pos.x  - boardX);
+        const sidePrev = Math.sign(prev.x - boardX); const sideNow  = Math.sign(pos.x  - boardX);
         if (sidePrev === 0 && sideNow === 0) return;
         if (sidePrev === 0 && sideNow !== 0){ pos.x = boardX + (sideNow > 0 ? half : -half); return; }
         if (sidePrev !== 0 && sideNow !== 0 && sidePrev !== sideNow){ pos.x = prev.x; return; }
       }
 
-      // Dikdörtgen platform çarpışması (sahneden aşağı düşmeyi önleme)
       function insideStageXZ(x, z, half=1){
         const sxMin = stage.position.x - STAGE_W/2 - half,
               sxMax = stage.position.x + STAGE_W/2 + half,
@@ -137,19 +180,10 @@
       }
 
       // Eliptik/dairesel zemin fonksiyonu
-      const a = groundR, b = groundR; // elips istiyorsak b'yi farklı seçebiliriz
-      function insideEllipse(x, z){
-        // Merkez (0,0) varsayıldı. Farklı merkez için (x-cx,z-cz)
-        const v = (x*x)/(a*a) + (z*z)/(b*b);
-        return v <= 1.0;
-      }
+      const a = groundR, b = groundR;
+      function insideEllipse(x, z){ return (x*x)/(a*a) + (z*z)/(b*b) <= 1.0; }
 
-      // Avatar için yer yüksekliği: elips içindeyse 0, değilse "uçurum"
-      const groundYAt = (x,z,half=1)=> {
-        // Sahnenin üstünden geçişi önleyen mevcut kuralı koruyoruz
-        if (insideStageXZ(x,z,half)) return 9999;
-        return insideEllipse(x,z) ? 0 : 9999;
-      };
+      const groundYAt = (x,z,half=1)=> { if (insideStageXZ(x,z,half)) return 9999; return insideEllipse(x,z) ? 0 : 9999; };
 
       return { ground: circle, planeSize, groundR, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt, boardBlock };
     }
@@ -158,21 +192,15 @@
   <!-- Glass Room (camlı oda) – Kapı BATI -->
   <script type="module" id="mod-glassroom">
     export function createGlassRoom(THREE, scene, { w, d, position, doorRatio = 0.35 }){
-      const baseH  = 2.6;      // alt bant
-      const upperH = 15.0;     // üst bant
-      const h = baseH + upperH;
-      const t = 0.25;
-
+      const baseH  = 2.6, upperH = 15.0; const h = baseH + upperH; const t = 0.25;
       const group = new THREE.Group();
       const matPillar = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.6, roughness: 0.5 });
       const matGlass  = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, metalness: 0.0, roughness: 0.15 });
       const matFloor  = new THREE.MeshStandardMaterial({ color: 0x303030 });
 
-      const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), matFloor);
-      floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
+      const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), matFloor); floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
 
-      const doorW = Math.max(1.2, d * doorRatio);
-      const segZ = Math.max(0, (d - doorW) / 2);
+      const doorW = Math.max(1.2, d * doorRatio); const segZ = Math.max(0, (d - doorW) / 2);
       const northBase = new THREE.Mesh(new THREE.BoxGeometry(w, baseH, t), matPillar); northBase.position.set(0, baseH/2, -d/2); group.add(northBase);
       const southBase = new THREE.Mesh(new THREE.BoxGeometry(w, baseH, t), matPillar); southBase.position.set(0, baseH/2,  d/2); group.add(southBase);
       const eastBase  = new THREE.Mesh(new THREE.BoxGeometry(d, baseH, t), matPillar); eastBase.rotation.y = Math.PI/2; eastBase.position.set( w/2, baseH/2, 0); group.add(eastBase);
@@ -185,8 +213,7 @@
       function buildUpperStrip({ along, L, fixedVal, isWestDoor=false }){
         const count = Math.ceil(L / cell);
         for (let i=0;i<count;i++){
-          const base = -L/2 + i*cell;
-          const colLen = Math.min(colW, L - i*cell);
+          const base = -L/2 + i*cell; const colLen = Math.min(colW, L - i*cell);
           if (colLen > 0){
             const col = new THREE.Mesh(along==='x'? new THREE.BoxGeometry(colLen, upperH, t) : new THREE.BoxGeometry(t, upperH, colLen), matPillar);
             if (along==='x') col.position.set(base + colLen/2, yUpperMid, fixedVal); else col.position.set(fixedVal, yUpperMid, base + colLen/2);
@@ -205,11 +232,9 @@
       buildUpperStrip({ along:'z', L:d, fixedVal: w/2, isWestDoor:false });
       buildUpperStrip({ along:'z', L:d, fixedVal:-w/2, isWestDoor:true  });
 
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), matGlass);
-      roof.position.set(0, h + t/2, 0); group.add(roof);
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), matGlass); roof.position.set(0, h + t/2, 0); group.add(roof);
 
-      group.position.copy(position);
-      scene.add(group);
+      group.position.copy(position); scene.add(group);
 
       const hx = w/2, hz = d/2; const ixMin=-hx, ixMax=hx, izMin=-hz, izMax=hz;
       function isInsideInner(lx, lz, half){ return (lx > ixMin + half && lx < ixMax - half && lz > izMin + half && lz < izMax - half); }
@@ -241,15 +266,11 @@
       const purple = new THREE.MeshStandardMaterial({ color: 0x7a3cf6, metalness: 0.35, roughness: 0.6 });
       const black  = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.5, roughness: 0.4 });
       const whiteM = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.0, roughness: 0.2, side: THREE.DoubleSide });
-      const t = 0.3; // duvar kalınlığı
+      const t = 0.3;
 
-      const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), purple);
-      floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
+      const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), purple); floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
 
-      const doorW = Math.max(2.0, w * doorRatio);
-      const doorH = Math.min(3.2, h * 0.5);
-      const hx = w/2, hz = d/2;
-
+      const doorW = Math.max(2.0, w * doorRatio); const doorH = Math.min(3.2, h * 0.5); const hx = w/2, hz = d/2;
       const segW = Math.max(0, (w - doorW)/2);
       if (segW > 0){
         const northL = new THREE.Mesh(new THREE.BoxGeometry(segW, h, t), purple); northL.position.set(-(doorW/2 + segW/2), h/2, -hz); group.add(northL);
@@ -272,45 +293,31 @@
       function addTriple(which){
         const totalW = 3*fw + 2*gap; const y = h*0.55;
         for(let i=0;i<3;i++){
-          const g = makeFrame();
-          const lx = -totalW/2 + i*(fw+gap) + fw/2;
+          const g = makeFrame(); const lx = -totalW/2 + i*(fw+gap) + fw/2;
           if(which==='south'){ g.rotation.y = Math.PI; g.position.set(lx, y,  hz - inset); }
           if(which==='west') { g.rotation.y =  Math.PI/2; g.position.set(-hx + inset, y, lx); }
           if(which==='east') { g.rotation.y = -Math.PI/2; g.position.set( hx - inset, y, lx); }
           group.add(g);
         }
       }
-      addTriple('south');
-      addTriple('west');
-      addTriple('east');
+      addTriple('south'); addTriple('west'); addTriple('east');
 
-      group.position.copy(position);
-      scene.add(group);
+      group.position.copy(position); scene.add(group);
 
       const ixMin=-hx, ixMax=hx, izMin=-hz, izMax=hz;
       function isInside(lx,lz,half){ return (lx > ixMin + half && lx < ixMax - half && lz > izMin + half && lz < izMax - half); }
       function buildingBlock(pos, prev, half=1){
         const lx=pos.x-position.x, lz=pos.z-position.z, lpx=prev.x-position.x, lpz=prev.z-position.z;
         const prevInside=isInside(lpx,lpz,half), nowInside=isInside(lx,lz,half);
-        const inDoorX = Math.abs(lx) <= doorW/2; const inDoorY = (pos.y - half) <= doorH;
-        const northPlane = izMin + half;
-        const crossingNorthOut=(lpz >= northPlane && lz <  northPlane);
-        const crossingNorthIn =(lpz <= northPlane && lz >  northPlane);
-
-        if (prevInside && !nowInside){
-          const through = crossingNorthOut && inDoorX && inDoorY;
-          if(!through){ pos.x=prev.x; pos.z=prev.z; return; }
-        }
-        if (!prevInside && nowInside){
-          const through = crossingNorthIn && inDoorX && inDoorY;
-          if(!through){ pos.x=prev.x; pos.z=prev.z; return; }
-        }
+        const inDoorX = Math.abs(lx) <= doorW/2; const inDoorY = (pos.y - half) <= doorH; const northPlane = izMin + half;
+        const crossingNorthOut=(lpz >= northPlane && lz <  northPlane); const crossingNorthIn =(lpz <= northPlane && lz >  northPlane);
+        if (prevInside && !nowInside){ const through = crossingNorthOut && inDoorX && inDoorY; if(!through){ pos.x=prev.x; pos.z=prev.z; return; } }
+        if (!prevInside && nowInside){ const through = crossingNorthIn && inDoorX && inDoorY; if(!through){ pos.x=prev.x; pos.z=prev.z; return; } }
         if (prevInside && nowInside){
           pos.x = Math.min(Math.max(pos.x, position.x + ixMin + half), position.x + ixMax - half);
           pos.z = Math.min(Math.max(pos.z, position.z + izMin + half), position.z + izMax - half);
         }
       }
-
       return { building: group, block: buildingBlock, size:{w,d,h}, door:{w:doorW,h:doorH} };
     }
   </script>
@@ -351,15 +358,9 @@
         black: new THREE.MeshStandardMaterial({ color: 0x111111 }),
         white: new THREE.MeshStandardMaterial({ color: 0xffffff }),
       };
-      return {
-        create(){
-          const avatar = createAvatarMesh(THREE, materials);
-          return avatar;
-        }
-      };
+      return { create(){ return createAvatarMesh(THREE, materials); } };
     }
 
-    // Hareket/animasyon mantığı — DEĞİŞMEDİ (yalnızca opsiyonel engeller eklendi)
     export function updateAvatar(THREE, dt, avatar, keys, camera, controls, helpers){
       if(!avatar) return;
       const { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock, buildingBlock, boardBlock } = helpers;
@@ -387,7 +388,6 @@
       const prev = avatar.position.clone();
       avatar.position.x += vel.x*dt; avatar.position.y = Math.max(avatar.position.y + vel.y*dt, AVATAR_SIZE/2); avatar.position.z += vel.z*dt;
 
-      // Kare sınır clamp'ı büyük bırakıyoruz; gerçek sınırı groundYAt belirler
       const minX = -planeSize/2 + AVATAR_SIZE/2, maxX = planeSize/2 - AVATAR_SIZE/2, minZ = -planeSize/2 + AVATAR_SIZE/2, maxZ = planeSize/2 - AVATAR_SIZE/2;
       avatar.position.x = Math.min(Math.max(avatar.position.x, minX), maxX);
       avatar.position.z = Math.min(Math.max(avatar.position.z, minZ), maxZ);
@@ -405,7 +405,6 @@
 
       if (vel.lengthSq()>0.0001){ const dirY = Math.atan2(vel.x, vel.z); if(!Number.isNaN(dirY)) avatar.rotation.y = dirY; }
 
-      // Animasyon
       avatar.userData.animBlend ??= 0;            
       avatar.userData.swingTime ??= 0;            
       const speed2D = Math.hypot(vel.x, vel.z);
@@ -418,23 +417,20 @@
       const amp  = THREE.MathUtils.lerp(0.1, 0.6, avatar.userData.animBlend);
       const s = Math.sin(avatar.userData.swingTime);
       const { aL, aR, lL, lR } = avatar.userData.limbs;
-      aL.rotation.x =  s * amp;
-      aR.rotation.x = -s * amp;
-      lL.rotation.x = -s * amp;
-      lR.rotation.x =  s * amp;
+      aL.rotation.x =  s * amp; aR.rotation.x = -s * amp; lL.rotation.x = -s * amp; lR.rotation.x =  s * amp;
       if(!onGround){ aL.rotation.x += 0.6; aR.rotation.x += 0.6; }
 
       const desiredTarget = avatar.position.clone(); const deltaTarget = desiredTarget.clone().sub(controls.target); camera.position.add(deltaTarget); controls.target.copy(avatar.position);
     }
   </script>
 
-  <!-- WORLD FX (Phase 1: Fog + Horizon Curtain + Gradient Sky) (Phase 2: Day/Night) (Phase 3: Distant Props) -->
+  <!-- WORLD FX (Phase 1: Fog + Horizon Curtain + Gradient Sky) (Phase 2: Day/Night) (Phase 3: Instanced Distant Props) -->
   <script type="module" id="mod-worldfx">
     import * as THREE from 'three';
     export function createWorldFX(THREE, scene, { planeSize }, { amb, sun }){
       const group = new THREE.Group(); scene.add(group);
 
-      // --- Phase 1: Fog + Horizon Curtain + Gradient Sky Dome ---
+      // --- Phase 1: Fog + Gradient Sky ---
       let skyTopDay = new THREE.Color(0x87b7ff);
       let skyBotDay = new THREE.Color(0xcfe8ff);
       let skyTopNight = new THREE.Color(0x0a0d1a);
@@ -456,58 +452,131 @@
       });
       const sky = new THREE.Mesh(skyGeo, skyMat); group.add(sky);
 
-      // Horizon curtain: içe bakan geniş silindir
-      const r = planeSize*0.8; // bahçenin ötesinde
+      // Horizon curtain
+      const r = planeSize*0.8;
       const curtain = new THREE.Mesh(
         new THREE.CylinderGeometry(r, r, 200, 48, 1, true),
         new THREE.MeshStandardMaterial({ color: 0x7aa7ff, metalness:0.0, roughness:1.0, side: THREE.BackSide, transparent:true, opacity:0.85 })
       );
-      curtain.position.y = 100; // yarı yükseklik
-      group.add(curtain);
+      curtain.position.y = 100; group.add(curtain);
 
-      // --- Phase 3: Distant props ring (hafif ağaçlar) ---
+      // --- Phase 3: Instanced distant trees (performant) ---
       const props = new THREE.Group(); group.add(props);
-      function addTree(px, pz){
-        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.6, 4, 6), new THREE.MeshStandardMaterial({ color: 0x6e4b2a, roughness:0.9 }));
-        trunk.position.set(px, 2, pz); trunk.castShadow=true; props.add(trunk);
-        const cone = new THREE.Mesh(new THREE.ConeGeometry(2.5, 6, 8), new THREE.MeshStandardMaterial({ color: 0x2b7a2b, roughness:0.8 }));
-        cone.position.set(px, 7, pz); cone.castShadow=true; props.add(cone);
-      }
-      const ringR = planeSize*0.6 + 40; const count = 28; // dairesel zeminin içinde kalır
+      const ringR = planeSize*0.6 + 40; const count = 64;
+      const dummy = new THREE.Object3D();
+      // Trunks
+      const trunkGeom = new THREE.CylinderGeometry(0.4, 0.6, 4, 6);
+      const trunkMat  = new THREE.MeshStandardMaterial({ color: 0x6e4b2a, roughness:0.9 }); trunkMat.shadowSide = THREE.FrontSide;
+      const trunks = new THREE.InstancedMesh(trunkGeom, trunkMat, count); trunks.castShadow = false; trunks.receiveShadow = false; props.add(trunks);
+      // Cones
+      const coneGeom = new THREE.ConeGeometry(2.5, 6, 8);
+      const coneMat  = new THREE.MeshStandardMaterial({ color: 0x2b7a2b, roughness:0.8 });
+      const cones = new THREE.InstancedMesh(coneGeom, coneMat, count); cones.castShadow = false; cones.receiveShadow = false; props.add(cones);
+
       for(let i=0;i<count;i++){
         const a = i / count * Math.PI*2;
         const px = Math.cos(a) * ringR;
         const pz = Math.sin(a) * ringR;
-        addTree(px, pz);
+        dummy.position.set(px, 2, pz); dummy.rotation.y = a; dummy.updateMatrix(); trunks.setMatrixAt(i, dummy.matrix);
+        dummy.position.set(px, 7, pz); dummy.updateMatrix(); cones.setMatrixAt(i, dummy.matrix);
       }
+      trunks.instanceMatrix.needsUpdate = true; cones.instanceMatrix.needsUpdate = true;
 
-      // --- Phase 2: Day/Night basit harmanlama ---
-      function dayNightFactor(date){
-        const h = date.getHours() + date.getMinutes()/60; // 0..24
-        const t = Math.cos((h-12)/12 * Math.PI); // 1 (öğlen) -> -1 (gece yarısı)
-        return (t+1)/2; // 0..1 (0=gece,1=gündüz)
-      }
+      // --- Phase 2: Day/Night blending ---
+      function dayNightFactor(date){ const h = date.getHours() + date.getMinutes()/60; const t = Math.cos((h-12)/12 * Math.PI); return (t+1)/2; }
       function updateLights(t){
         const colTop = skyTopNight.clone().lerp(skyTopDay, t);
         const colBot = skyBotNight.clone().lerp(skyBotDay, t);
         sky.material.uniforms.topColor.value.copy(colTop);
         sky.material.uniforms.bottomColor.value.copy(colBot);
-        const fogCol = colBot.clone();
-        scene.fog.color.copy(fogCol);
-        amb.intensity = 0.25 + 0.55*t;
-        sun.intensity = 0.2  + 0.9*t;
-        sun.color.copy(new THREE.Color(0xffe7b0).lerp(new THREE.Color(0xffffff), t));
+        scene.fog.color.copy(colBot.clone());
+        amb.intensity = 0.25 + 0.55*t; sun.intensity = 0.2  + 0.9*t; sun.color.copy(new THREE.Color(0xffe7b0).lerp(new THREE.Color(0xffffff), t));
         curtain.material.color.copy(colBot.clone().lerp(colTop, 0.3));
       }
-
       updateLights(dayNightFactor(new Date()));
 
+      return { update(){ const t = dayNightFactor(new Date()); updateLights(t); } };
+    }
+  </script>
+
+  <!-- PORTAL (Faz 4: portal alanı + UI) & PRESETS (Faz 5) -->
+  <script type="module" id="mod-portal">
+    export function createPortalSystem(THREE, scene, dom){
+      // Visual portal
+      const group = new THREE.Group(); scene.add(group);
+      const radius = 10; const ringGeo = new THREE.RingGeometry(radius*0.7, radius, 64);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0x7fd1ff, transparent:true, opacity:0.6, side: THREE.DoubleSide });
+      const ring = new THREE.Mesh(ringGeo, ringMat); ring.rotation.x = -Math.PI/2; group.add(ring);
+
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(radius*0.05, radius*0.3, 6, 16, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0x9fd8ff, transparent:true, opacity:0.35, side: THREE.DoubleSide })
+      );
+      beam.position.y = 3; group.add(beam);
+
+      const ui = dom.portalUI, list = dom.portalList, btnCancel = dom.btnCancel, btnGo = dom.btnTeleport, hint = dom.portalHint, fade = dom.fade;
+      // 5 instance — hepsi varsayılan (aynı düzen)
+      const destinations = [
+        { id:'garden-alpha',   title:'Garden Alpha',   note:'Varsayılan düzen' },
+        { id:'garden-beta',    title:'Garden Beta',    note:'Varsayılan düzen' },
+        { id:'garden-gamma',   title:'Garden Gamma',   note:'Varsayılan düzen' },
+        { id:'garden-delta',   title:'Garden Delta',   note:'Varsayılan düzen' },
+        { id:'garden-epsilon', title:'Garden Epsilon', note:'Varsayılan düzen' },
+      ];
+      let selected = 0;
+      function renderList(){
+        list.innerHTML = '';
+        destinations.forEach((d,i)=>{
+          const el = document.createElement('div'); el.className = 'item' + (i===selected?' selected':'');
+          el.innerHTML = `<div style="width:8px; height:8px; border-radius:50%; background:#8cc2ff;"></div>
+                          <div style="flex:1">
+                            <div style="font-weight:600">${d.title}</div>
+                            <div style="opacity:.7; font-size:12px">${d.note}</div>
+                          </div>`;
+          el.addEventListener('click', ()=>{ selected=i; renderList(); });
+          list.appendChild(el);
+        });
+      }
+      renderList();
+
+      function openUI(){ ui.classList.add('visible'); hint.classList.add('visible'); }
+      function closeUI(){ ui.classList.remove('visible'); hint.classList.remove('visible'); }
+
+      btnCancel.addEventListener('click', closeUI);
+      function moveSel(d){ selected = (selected + d + destinations.length) % destinations.length; renderList(); }
+      function fadeOn(){ fade.classList.add('on'); }
+      function fadeOff(){ fade.classList.remove('on'); }
+
       return {
-        update(){
-          const t = dayNightFactor(new Date());
-          updateLights(t);
+        group, radius, openUI, closeUI, moveSel,
+        getSelected: ()=> destinations[selected],
+        async teleportWith(applyPreset){
+          const dst = destinations[selected];
+          fadeOn();
+          await new Promise(r=>setTimeout(r, 420));
+          applyPreset(dst.id);
+          await new Promise(r=>setTimeout(r, 120));
+          fadeOff();
         }
       };
+    }
+
+    // --- Faz 5: Preset controller — TÜMÜ VARSAYILAN DÜZEN ---
+    export function createPresetController(THREE, sceneRefs){
+      const { objects, dims } = sceneRefs;
+      function applyDefault(){
+        objects.stage.position.set(-dims.planeSize/2 + dims.STAGE_W/2, dims.STAGE_H/2, 0);
+        objects.glassRoom.position.set( dims.planeSize/2 - dims.STAGE_W/2, 0, 0 );
+        objects.nftBuilding.position.set(5, 0, 135);
+      }
+      const presets = {
+        'garden-alpha': applyDefault,
+        'garden-beta': applyDefault,
+        'garden-gamma': applyDefault,
+        'garden-delta': applyDefault,
+        'garden-epsilon': applyDefault,
+      };
+      return function applyPreset(id){ (presets[id]||applyDefault)(); };
     }
   </script>
 
@@ -516,34 +585,34 @@
     import * as THREE from 'three';
     import { OrbitControls } from 'orbit';
 
-    async function importById(id){
-      const el = document.getElementById(id);
-      if(!el) throw new Error(`Modül bulunamadı: ${id}`);
-      const code = el.textContent;
-      const blob = new Blob([code], { type: 'text/javascript' });
-      const url = URL.createObjectURL(blob);
-      try { return await import(url); } finally { URL.revokeObjectURL(url); }
-    }
+    async function importById(id){ const el = document.getElementById(id); if(!el) throw new Error(`Modül bulunamadı: ${id}`); const code = el.textContent; const blob = new Blob([code], { type: 'text/javascript' }); const url = URL.createObjectURL(blob); try { return await import(url); } finally { URL.revokeObjectURL(url); } }
 
-    const utils                          = await importById('mod-utils');
-    const { createSceneSetup }           = await importById('mod-scene');
-    const { createInput }                = await importById('mod-input');
-    const { createGarden }               = await importById('mod-garden');
-    const { createGlassRoom }            = await importById('mod-glassroom');
-    const { createNftBuilding }          = await importById('mod-nft-building');
-    const { AvatarFactory, updateAvatar }= await importById('mod-entities');
-    const { createWorldFX }              = await importById('mod-worldfx');
+    const utils                                    = await importById('mod-utils');
+    const { createSceneSetup }                     = await importById('mod-scene');
+    const { createInput }                          = await importById('mod-input');
+    const { createGarden }                         = await importById('mod-garden');
+    const { createGlassRoom }                      = await importById('mod-glassroom');
+    const { createNftBuilding }                    = await importById('mod-nft-building');
+    const { AvatarFactory, updateAvatar }          = await importById('mod-entities');
+    const { createWorldFX }                        = await importById('mod-worldfx');
+    const { createPortalSystem, createPresetController } = await importById('mod-portal');
 
     const hud = document.getElementById('hud');
     const nameTag = document.getElementById('nameTag');
+    const portalUI = document.getElementById('portalUI');
+    const portalList = document.getElementById('portalList');
+    const btnCancel = document.getElementById('btnCancel');
+    const btnTeleport = document.getElementById('btnTeleport');
+    const portalHint = document.getElementById('portalHint');
+    const fade = document.getElementById('fade');
 
-    const { scene, camera, renderer, controls, amb, sun } = createSceneSetup(THREE, OrbitControls);
+    const { scene, camera, renderer, controls, amb, sun, adaptiveQuality } = createSceneSetup(THREE, OrbitControls);
     const keys = createInput();
 
     const { planeSize, groundR, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt, boardBlock } = createGarden(THREE, scene);
     const stageTopY = stage.position.y + STAGE_H/2;
 
-    // Camlı oda: sahne ile aynı boyut; haritanın en sağ kenarı
+    // Camlı oda: sahne ile aynı boyut; haritanın en sağ kenarı (varsayılan)
     const roomPos = new THREE.Vector3( planeSize/2 - STAGE_W/2, 0, 0 );
     const { room: glassRoom, block: roomBlock } = createGlassRoom(THREE, scene, { w: STAGE_W, d: STAGE_D, position: roomPos });
 
@@ -556,26 +625,56 @@
 
     // Avatar
     const avatarFactory = AvatarFactory(THREE);
-    const avatar = avatarFactory.create();
-    scene.add(avatar);
+    const avatar = avatarFactory.create(); scene.add(avatar);
+    avatar.position.set(roomPos.x, 1, roomPos.z); avatar.rotation.y = -Math.PI/2;
+    camera.position.set(avatar.position.x + 12, avatar.position.y + 8, avatar.position.z + 0); controls.target.copy(avatar.position);
 
-    // Spawn: odanın içinde, sahneye (batıya) dönük
-    avatar.position.set(roomPos.x, 1, roomPos.z);
-    avatar.rotation.y = -Math.PI/2; // sahneye bakış
+    // Portal (mor binanın karşısı)
+    const portalPos = new THREE.Vector3(-5, 0, -135);
+    const portal = createPortalSystem(THREE, scene, { portalUI, portalList, btnCancel, btnTeleport, portalHint, fade });
+    portal.group.position.copy(portalPos);
 
-    // Kamera: sahneye doğru baksın
-    camera.position.set(avatar.position.x + 12, avatar.position.y + 8, avatar.position.z + 0);
-    controls.target.copy(avatar.position);
+    // Preset controller (5 instance, varsayılan düzen)
+    const applyPreset = createPresetController(THREE, {
+      objects: { stage, glassRoom, nftBuilding },
+      dims: { planeSize, STAGE_W, STAGE_D, STAGE_H },
+    });
+
+    // UI / Teleport akışı — tüm ID’ler aynı spawn (varsayılan)
+    function spawnDefault(){
+      avatar.position.set(planeSize/2 - STAGE_W/2, 1, 0);
+      controls.target.copy(avatar.position);
+      camera.position.set(avatar.position.x + 12, avatar.position.y + 8, avatar.position.z + 0);
+    }
+    btnTeleport.addEventListener('click', ()=>{ portal.closeUI(); portal.teleportWith((id)=>{ applyPreset(id); spawnDefault(); }); });
+
+    // Yakınlık tespiti (otomatik aç/kapat)
+    let uiOpen = false;
+    function updatePortalProximity(){
+      const dx = avatar.position.x - portal.group.position.x;
+      const dz = avatar.position.z - portal.group.position.z;
+      const dist2 = dx*dx + dz*dz; const R = portal.radius * 1.1;
+      const inside = dist2 < (R*R);
+      if (inside && !uiOpen){ portal.openUI(); uiOpen = true; }
+      else if (!inside && uiOpen){ portal.closeUI(); uiOpen = false; }
+      const t = performance.now()*0.001; portal.group.rotation.y = 0.1*Math.sin(t*1.5);
+    }
+
+    // Klavye: listede yukarı/aşağı + ESC/Enter
+    addEventListener('keydown', (e)=>{
+      if (!portalUI.classList.contains('visible')) return;
+      if (e.key==='ArrowDown'){ portal.moveSel(+1); }
+      if (e.key==='ArrowUp'){ portal.moveSel(-1); }
+      if (e.key==='Escape'){ portal.closeUI(); }
+      if (e.key==='Enter'){ btnTeleport.click(); }
+    });
 
     function updateNameTag(){
-      const pos = avatar.position.clone();
-      pos.y += 3.2; // kafanın biraz üstü
-      pos.project(camera);
+      const pos = avatar.position.clone(); pos.y += 3.2; pos.project(camera);
       const out = (Math.abs(pos.x) > 1 || Math.abs(pos.y) > 1 || pos.z > 1);
       if(out){ nameTag.classList.add('hidden'); return; }
       nameTag.classList.remove('hidden');
-      const x = (pos.x * 0.5 + 0.5) * innerWidth;
-      const y = (-pos.y * 0.5 + 0.5) * innerHeight;
+      const x = (pos.x * 0.5 + 0.5) * innerWidth; const y = (-pos.y * 0.5 + 0.5) * innerHeight;
       nameTag.style.transform = `translate(-50%, -100%) translate(${x}px, ${y}px)`;
     }
 
@@ -585,10 +684,11 @@
       const dt = Math.min(0.033, clock.getDelta());
       updateAvatar(THREE, dt, avatar, keys, camera, controls, { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock, buildingBlock, boardBlock });
       worldfx.update(dt);
+      updatePortalProximity();
+      adaptiveQuality();
       controls.update();
       renderer.render(scene, camera);
 
-      // HUD
       const heading = ((utils.deg(avatar.rotation.y) % 360) + 360) % 360;
       hud.textContent = `x: ${utils.fmt(avatar.position.x)}\ny: ${utils.fmt(avatar.position.y)}\nz: ${utils.fmt(avatar.position.z)}\nrotY: ${heading.toFixed(1)}°`;
       updateNameTag();
