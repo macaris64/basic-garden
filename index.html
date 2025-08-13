@@ -76,7 +76,7 @@
     }
   </script>
 
-  <!-- Garden (ground + stage + lights + screen) | Basamaklar KALDIRILDI -->
+  <!-- Garden (ground + stage + lights + RIGHT side screen) -->
   <script type="module" id="mod-garden">
     export function createGarden(THREE, scene){
       const planeSize = 400; // büyük bahçe
@@ -87,7 +87,7 @@
       ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
 
       // Sahne (X sabit solda, Z ortada)
-      const STAGE_W = 90, STAGE_D = 90, STAGE_H = 30;
+      const STAGE_W = 90, STAGE_D = 90, STAGE_H = 15; // yarı yükseklik
       const stageMat = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.1, roughness: 0.8 });
       const stage = new THREE.Mesh(new THREE.BoxGeometry(STAGE_W, STAGE_H, STAGE_D), stageMat);
       stage.castShadow = true; stage.receiveShadow = true;
@@ -105,24 +105,47 @@
         scene.add(s.target);
         s.castShadow = true;
         spots.add(s);
-        const head = new THREE.Mesh(new THREE.BoxGeometry(1.2,1.2,1.2), new THREE.MeshStandardMaterial({ color: 0x222222, emissive: 0x111111, metalness:0.5, roughness:0.4 }));
-        head.position.copy(s.position);
-        head.castShadow = false; head.receiveShadow = false;
-        spots.add(head);
       });
       scene.add(spots);
 
-      // Sunum ekranı: sahnenin üstünde, DOĞUya bakan beyaz panel — biraz DAHA ARKADA
-      const screenW = STAGE_W * 0.9;
-      const screenH = STAGE_H * 0.6;
-      const screen = new THREE.Mesh(
-        new THREE.PlaneGeometry(screenW, screenH),
+      // *** Sunum tahtası (kare) — sahnenin önünün hemen sağı ***
+      // Uç noktalar: (-110, 10, -50) -> (-110, 10, -130)
+      const boardSize = 80;                   // kare kenar
+      const boardX = -110;                    // düzlem X sabit
+      const boardZMin = -130, boardZMax = -50;// Z aralığı
+      const boardZCenter = (boardZMin + boardZMax) * 0.5; // -90
+      const boardYCenter = boardSize * 0.5;   // 40 (taban 0)
+      const board = new THREE.Mesh(
+        new THREE.PlaneGeometry(boardSize, boardSize),
         new THREE.MeshStandardMaterial({ color: 0xffffff, metalness:0.0, roughness:0.25, side: THREE.DoubleSide })
       );
-      // "Arkasında" = sahnenin arka tarafına (BATI yönüne) doğru az geri çekildi
-      screen.position.set(stage.position.x - STAGE_W*0.2, STAGE_H + 10, 0);
-      screen.rotation.y = -Math.PI/2; // doğu
-      scene.add(screen);
+      board.position.set(boardX, boardYCenter, boardZCenter);
+      board.rotation.y = -Math.PI/2; // doğuya bakar; düzlem YZ üzerinde
+      scene.add(board);
+
+      // --- Sunum tahtası ÇARPIŞMA fonksiyonu (dikey düzlem, X=boardX) ---
+      function boardBlock(pos, prev, half = 1){
+        // Tahtanın kapsadığı Y ve Z aralığı
+        const yMin = 0, yMax = boardSize; // taban sahne tabanı ile hizalı
+        const zMin = boardZMin, zMax = boardZMax;
+        const withinZ = (pos.z > zMin - half && pos.z < zMax + half) || (prev.z > zMin - half && prev.z < zMax + half);
+        const withinY = (pos.y - half < yMax && pos.y + half > yMin) || (prev.y - half < yMax && prev.y + half > yMin);
+        if (!withinZ || !withinY) return;
+        // Düzlemi geçiş tespiti: farklı taraflarda mıyız?
+        const sidePrev = Math.sign(prev.x - boardX);
+        const sideNow  = Math.sign(pos.x  - boardX);
+        if (sidePrev === 0 && sideNow === 0) return; // tam üzerindeyse sessizce geç
+        if (sidePrev === 0 && sideNow !== 0){
+          // Üstünde başlayıp bir tarafa kaymış; geri it
+          pos.x = boardX + (sideNow > 0 ? half : -half);
+          return;
+        }
+        if (sidePrev !== 0 && sideNow !== 0 && sidePrev !== sideNow){
+          // Düzlemi kesmiş -> geri al
+          pos.x = prev.x;
+          return;
+        }
+      }
 
       function insideStageXZ(x, z, half=1){
         const sxMin = stage.position.x - STAGE_W/2 - half,
@@ -133,7 +156,7 @@
       }
       const groundYAt = (x,z,half=1)=> insideStageXZ(x,z,half) ? 9999 : 0;
 
-      return { ground, planeSize, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt };
+      return { ground, planeSize, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt, boardBlock };
     }
   </script>
 
@@ -262,7 +285,7 @@
     // Hareket/animasyon mantığı — DEĞİŞMEDİ
     export function updateAvatar(THREE, dt, avatar, keys, camera, controls, helpers){
       if(!avatar) return;
-      const { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock } = helpers;
+      const { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock, boardBlock } = helpers;
       const AVATAR_SIZE = 2;
 
       const forward = new THREE.Vector3(); camera.getWorldDirection(forward); forward.y=0; forward.normalize();
@@ -295,8 +318,13 @@
         avatar.position.x = prev.x; avatar.position.z = prev.z; vel.x = 0; vel.z = 0;
       }
 
+      // Camlı oda çarpışması
       if (typeof roomBlock === 'function'){
         roomBlock(avatar.position, prev, AVATAR_SIZE/2);
+      }
+      // Sunum tahtası çarpışması
+      if (typeof boardBlock === 'function'){
+        boardBlock(avatar.position, prev, AVATAR_SIZE/2);
       }
 
       const nGY = groundYAt(avatar.position.x, avatar.position.z, AVATAR_SIZE/2) + AVATAR_SIZE/2;
@@ -355,7 +383,7 @@
     const { scene, camera, renderer, controls } = createSceneSetup(THREE, OrbitControls);
     const keys = createInput();
 
-    const { planeSize, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt } = createGarden(THREE, scene);
+    const { planeSize, stage, STAGE_W, STAGE_D, STAGE_H, insideStageXZ, groundYAt, boardBlock } = createGarden(THREE, scene);
     const stageTopY = stage.position.y + STAGE_H/2;
 
     // Camlı oda: sahne ile aynı boyut; haritanın en sağ kenarı
@@ -391,16 +419,13 @@
     function animate(){
       requestAnimationFrame(animate);
       const dt = Math.min(0.033, clock.getDelta());
-      updateAvatar(THREE, dt, avatar, keys, camera, controls, { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock });
+      updateAvatar(THREE, dt, avatar, keys, camera, controls, { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock, boardBlock });
       controls.update();
       renderer.render(scene, camera);
 
       // HUD
       const heading = ((utils.deg(avatar.rotation.y) % 360) + 360) % 360;
-      hud.textContent = `x: ${utils.fmt(avatar.position.x)}
-y: ${utils.fmt(avatar.position.y)}
-z: ${utils.fmt(avatar.position.z)}
-rotY: ${heading.toFixed(1)}°`;
+      hud.textContent = `x: ${utils.fmt(avatar.position.x)}\ny: ${utils.fmt(avatar.position.y)}\nz: ${utils.fmt(avatar.position.z)}\nrotY: ${heading.toFixed(1)}°`;
       updateNameTag();
     }
     animate();
