@@ -76,7 +76,7 @@
     }
   </script>
 
-  <!-- Garden (ground + stage + lights + RIGHT side screen) -->
+  <!-- Garden (ground + stage + SIDE screen w/ collision) | Spotlar ve arka ekran KALDIRILDI -->
   <script type="module" id="mod-garden">
     export function createGarden(THREE, scene){
       const planeSize = 400; // büyük bahçe
@@ -87,26 +87,12 @@
       ground.rotation.x = -Math.PI/2; ground.receiveShadow = true; scene.add(ground);
 
       // Sahne (X sabit solda, Z ortada)
-      const STAGE_W = 90, STAGE_D = 90, STAGE_H = 15; // yarı yükseklik
+      const STAGE_W = 90, STAGE_D = 90, STAGE_H = 15; // yükseklik YARIYA indirildi (30 -> 15)
       const stageMat = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.1, roughness: 0.8 });
       const stage = new THREE.Mesh(new THREE.BoxGeometry(STAGE_W, STAGE_H, STAGE_D), stageMat);
       stage.castShadow = true; stage.receiveShadow = true;
       stage.position.set(-planeSize/2 + STAGE_W/2, STAGE_H/2, 0);
       scene.add(stage);
-
-      // Sahne ışıkları: üstten 3 spot
-      const spots = new THREE.Group();
-      const spotY = STAGE_H + 20;
-      const zOff = STAGE_D * 0.3;
-      [ -zOff, 0, zOff ].forEach((z)=>{
-        const s = new THREE.SpotLight(0xffffff, 1.2, 120, THREE.MathUtils.degToRad(28), 0.4, 1.0);
-        s.position.set(stage.position.x, spotY, z);
-        s.target.position.set(stage.position.x, STAGE_H*0.5, 0);
-        scene.add(s.target);
-        s.castShadow = true;
-        spots.add(s);
-      });
-      scene.add(spots);
 
       // *** Sunum tahtası (kare) — sahnenin önünün hemen sağı ***
       // Uç noktalar: (-110, 10, -50) -> (-110, 10, -130)
@@ -238,6 +224,99 @@
     }
   </script>
 
+  <!-- NFT / Sertifika Binası (kapı KUZEY, diğer 3 duvarda 3’er çerçeve) -->
+  <script type="module" id="mod-nft-building">
+    export function createNftBuilding(THREE, scene, {
+      w = 60, d = 40, h = 22,
+      position = new THREE.Vector3(5, 0, 135),
+      doorRatio = 0.35, // KUZEY (N, -Z) duvarında kapı
+    } = {}){
+      const group = new THREE.Group();
+      const purple = new THREE.MeshStandardMaterial({ color: 0x7a3cf6, metalness: 0.35, roughness: 0.6 });
+      const black  = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.5, roughness: 0.4 });
+      const whiteM = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.0, roughness: 0.2, side: THREE.DoubleSide });
+      const t = 0.3; // duvar kalınlığı
+
+      // Zemin (mor)
+      const floor = new THREE.Mesh(new THREE.BoxGeometry(w, t, d), purple);
+      floor.position.y = 0; floor.receiveShadow = true; group.add(floor);
+
+      // Duvarlar: N (-z, KAPI), S (+z), W (-x), E (+x)
+      const doorW = Math.max(2.0, w * doorRatio);
+      const doorH = Math.min(3.2, h * 0.5);
+      const hx = w/2, hz = d/2;
+
+      // KUZEY — kapılı
+      const segW = Math.max(0, (w - doorW)/2);
+      if (segW > 0){
+        const northL = new THREE.Mesh(new THREE.BoxGeometry(segW, h, t), purple); northL.position.set(-(doorW/2 + segW/2), h/2, -hz); group.add(northL);
+        const northR = new THREE.Mesh(new THREE.BoxGeometry(segW, h, t), purple); northR.position.set( (doorW/2 + segW/2), h/2, -hz); group.add(northR);
+      }
+      // Güney
+      const south = new THREE.Mesh(new THREE.BoxGeometry(w, h, t), purple); south.position.set(0, h/2,  hz); group.add(south);
+      // Batı & Doğu
+      const west  = new THREE.Mesh(new THREE.BoxGeometry(d, h, t), purple); west.rotation.y = Math.PI/2;  west.position.set(-hx, h/2, 0); group.add(west);
+      const east  = new THREE.Mesh(new THREE.BoxGeometry(d, h, t), purple); east.rotation.y = Math.PI/2;   east.position.set( hx, h/2, 0); group.add(east);
+
+      // İç paneller (siyah çerçeveli beyaz) — KAPI DUVARI HARİÇ her duvarda 3 adet
+      const fw = 8, fh = 6, gap = 3, inset = t/2 + 0.02, border = 0.4, depth = 0.2;
+      function makeFrame(){
+        const panel = new THREE.Mesh(new THREE.PlaneGeometry(fw-2*border, fh-2*border), whiteM);
+        const barH  = new THREE.BoxGeometry(fw, border, depth);
+        const barV  = new THREE.BoxGeometry(border, fh, depth);
+        const top = new THREE.Mesh(barH, black), bot=new THREE.Mesh(barH, black), lef=new THREE.Mesh(barV, black), rig=new THREE.Mesh(barV, black);
+        top.position.set(0,  (fh-border)/2, 0); bot.position.set(0, -(fh-border)/2, 0);
+        lef.position.set(-(fw-border)/2, 0, 0); rig.position.set( (fw-border)/2, 0, 0);
+        const g = new THREE.Group(); g.add(panel, top, bot, lef, rig); return g;
+      }
+      function addTriple(which){
+        // 3 çerçeveyi yatayda hizala (merkezlenmiş)
+        const totalW = 3*fw + 2*gap; const y = h*0.55; // orta bant
+        for(let i=0;i<3;i++){
+          const g = makeFrame();
+          const lx = -totalW/2 + i*(fw+gap) + fw/2;
+          if(which==='south'){ g.rotation.y = Math.PI; g.position.set(lx, y,  hz - inset); }
+          if(which==='west') { g.rotation.y =  Math.PI/2; g.position.set(-hx + inset, y, lx); }
+          if(which==='east') { g.rotation.y = -Math.PI/2; g.position.set( hx - inset, y, lx); }
+          group.add(g);
+        }
+      }
+      addTriple('south');
+      addTriple('west');
+      addTriple('east');
+
+      group.position.copy(position);
+      scene.add(group);
+
+      // Çarpışma — kapı sadece KUZEY duvarında (z ~ -hz), |x| <= doorW/2 ve y <= doorH iken serbest
+      const ixMin=-hx, ixMax=hx, izMin=-hz, izMax=hz;
+      function isInside(lx,lz,half){ return (lx > ixMin + half && lx < ixMax - half && lz > izMin + half && lz < izMax - half); }
+      function buildingBlock(pos, prev, half=1){
+        const lx=pos.x-position.x, lz=pos.z-position.z, lpx=prev.x-position.x, lpz=prev.z-position.z;
+        const prevInside=isInside(lpx,lpz,half), nowInside=isInside(lx,lz,half);
+        const inDoorX = Math.abs(lx) <= doorW/2; const inDoorY = (pos.y - half) <= doorH;
+        const northPlane = izMin + half;
+        const crossingNorthOut=(lpz >= northPlane && lz <  northPlane);
+        const crossingNorthIn =(lpz <= northPlane && lz >  northPlane);
+
+        if (prevInside && !nowInside){
+          const through = crossingNorthOut && inDoorX && inDoorY;
+          if(!through){ pos.x=prev.x; pos.z=prev.z; return; }
+        }
+        if (!prevInside && nowInside){
+          const through = crossingNorthIn && inDoorX && inDoorY;
+          if(!through){ pos.x=prev.x; pos.z=prev.z; return; }
+        }
+        if (prevInside && nowInside){
+          pos.x = Math.min(Math.max(pos.x, position.x + ixMin + half), position.x + ixMax - half);
+          pos.z = Math.min(Math.max(pos.z, position.z + izMin + half), position.z + izMax - half);
+        }
+      }
+
+      return { building: group, block: buildingBlock, size:{w,d,h}, door:{w:doorW,h:doorH} };
+    }
+  </script>
+
   <!-- Avatar Factory + Animator -->
   <script type="module" id="mod-entities">
     export function createAvatarMesh(THREE, materials){
@@ -282,10 +361,10 @@
       };
     }
 
-    // Hareket/animasyon mantığı — DEĞİŞMEDİ
+    // Hareket/animasyon mantığı — DEĞİŞMEDİ (yalnızca opsiyonel engeller eklendi)
     export function updateAvatar(THREE, dt, avatar, keys, camera, controls, helpers){
       if(!avatar) return;
-      const { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock, boardBlock } = helpers;
+      const { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock, buildingBlock, boardBlock } = helpers;
       const AVATAR_SIZE = 2;
 
       const forward = new THREE.Vector3(); camera.getWorldDirection(forward); forward.y=0; forward.normalize();
@@ -318,14 +397,10 @@
         avatar.position.x = prev.x; avatar.position.z = prev.z; vel.x = 0; vel.z = 0;
       }
 
-      // Camlı oda çarpışması
-      if (typeof roomBlock === 'function'){
-        roomBlock(avatar.position, prev, AVATAR_SIZE/2);
-      }
-      // Sunum tahtası çarpışması
-      if (typeof boardBlock === 'function'){
-        boardBlock(avatar.position, prev, AVATAR_SIZE/2);
-      }
+      // Çarpışmalar: camlı oda, NFT bina, sunum tahtası
+      if (typeof roomBlock === 'function')      roomBlock(avatar.position, prev, AVATAR_SIZE/2);
+      if (typeof buildingBlock === 'function')  buildingBlock(avatar.position, prev, AVATAR_SIZE/2);
+      if (typeof boardBlock === 'function')     boardBlock(avatar.position, prev, AVATAR_SIZE/2);
 
       const nGY = groundYAt(avatar.position.x, avatar.position.z, AVATAR_SIZE/2) + AVATAR_SIZE/2;
       if (avatar.position.y < nGY){ avatar.position.y = nGY; vel.y = 0; }
@@ -375,6 +450,7 @@
     const { createInput }      = await importById('mod-input');
     const { createGarden }     = await importById('mod-garden');
     const { createGlassRoom }  = await importById('mod-glassroom');
+    const { createNftBuilding }= await importById('mod-nft-building');
     const { AvatarFactory, updateAvatar } = await importById('mod-entities');
 
     const hud = document.getElementById('hud');
@@ -390,7 +466,11 @@
     const roomPos = new THREE.Vector3( planeSize/2 - STAGE_W/2, 0, 0 );
     const { room: glassRoom, block: roomBlock } = createGlassRoom(THREE, scene, { w: STAGE_W, d: STAGE_D, position: roomPos });
 
-    // Avatar: factory ile oluştur
+    // NFT Bina: garden sol-orta; merkez (5,0,135)
+    const nftPos = new THREE.Vector3(5, 0, 135);
+    const { building: nftBuilding, block: buildingBlock } = createNftBuilding(THREE, scene, { w: 60, d: 40, h: 22, position: nftPos, doorRatio: 0.35 });
+
+    // Avatar
     const avatarFactory = AvatarFactory(THREE);
     const avatar = avatarFactory.create();
     scene.add(avatar);
@@ -419,7 +499,7 @@
     function animate(){
       requestAnimationFrame(animate);
       const dt = Math.min(0.033, clock.getDelta());
-      updateAvatar(THREE, dt, avatar, keys, camera, controls, { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock, boardBlock });
+      updateAvatar(THREE, dt, avatar, keys, camera, controls, { insideStageXZ, groundYAt, planeSize, stageTopY, roomBlock, buildingBlock, boardBlock });
       controls.update();
       renderer.render(scene, camera);
 
